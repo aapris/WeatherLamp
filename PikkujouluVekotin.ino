@@ -22,11 +22,21 @@
 #include <DNSServer.h>            // Local DNS Server used for redirecting all requests to the configuration portal
 #include <ESP8266WebServer.h>     // Local WebServer used to serve the configuration portal
 #include <WiFiManager.h>          // https://github.com/tzapu/WiFiManager WiFi Configuration Magic
+#ifndef FastLED
+  #include <FastLED.h>
+#endif
+
 
 
 // I2C settings
 // #define SDA     D2
 // #define SCL     D1
+
+// Move to settings, perhaps?
+CRGBPalette16 currentPalette;
+TBlendType    currentBlending;
+
+
 
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived in topic: ");
@@ -36,6 +46,39 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Serial.print((char)payload[i]);
   }
   Serial.println();
+  if (payload[0] == '0') {
+    Serial.println("Protocol version was 0 as expected");
+  }
+
+  // There are several different palettes of colors demonstrated here.
+  //
+  // FastLED provides several 'preset' palettes: RainbowColors_p, RainbowStripeColors_p,
+  // OceanColors_p, CloudColors_p, LavaColors_p, ForestColors_p, and PartyColors_p.
+  switch (payload[1]) {
+    case '0':
+      Serial.println("Switch to PartyColors_p");
+      currentPalette = PartyColors_p;
+      break;
+    case '1':
+      Serial.println("Switch to OceanColors_p");
+      currentPalette = OceanColors_p;
+      break;
+    case '2':
+      Serial.println("Switch to LavaColors_p");
+      currentPalette = LavaColors_p;
+      break;
+    case '3':
+      Serial.println("Switch to ForestColors_p");
+      currentPalette = ForestColors_p;
+      break;
+    case '4':
+      Serial.println("Switch to PartyColors_p");
+      currentPalette = PartyColors_p;
+      break;
+    default:
+      // something
+      break;
+  }  
   Serial.println("-----------------------");
 }
 
@@ -104,20 +147,48 @@ void setup() {
   Serial.println(ap_name);
   wifiManager.autoConnect(ap_name);
   MqttSetup();
+  Serial.println("Init FastLED");
+  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
+  // FastLED.addLeds<LED_TYPE, LED_PIN, CLK_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
+  
+  FastLED.setBrightness(  BRIGHTNESS );
+  
+  currentPalette = RainbowColors_p;
+  currentBlending = LINEARBLEND;
+  
 }
 
 void loop() {
+  unsigned long now = millis();
   if (!client.loop()) {
     Serial.print("Client disconnected...");
     // TODO: increase reconnect from every loop() to every 60 sec or so
     MqttSetup();
     return;
   }
-  if (lastPing + 10000 < millis()) {
-    lastPing = millis();
+  if (lastPing + 10000 < now) {
+    lastPing = now;
     SendPingToMQTT();
   }
-  runLedEffect();  
+//  runLedEffect();  
+  static uint8_t startIndex = 0;
+  startIndex = startIndex + 1; /* motion speed */
+
+  FillLEDsFromPaletteColors( startIndex);
+  
+  FastLED.show();
+  FastLED.delay(1000 / UPDATES_PER_SECOND);
+  
+}
+
+void FillLEDsFromPaletteColors( uint8_t colorIndex)
+{
+    uint8_t brightness = BRIGHTNESS;
+    
+    for( int i = 0; i < NUM_LEDS; i++) {
+        leds[i] = ColorFromPalette( currentPalette, colorIndex, brightness, currentBlending);
+        colorIndex += 3;
+    }
 }
 
 void runLedEffect() {
