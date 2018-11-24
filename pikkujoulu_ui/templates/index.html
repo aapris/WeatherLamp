@@ -1,0 +1,79 @@
+{% extends "layout.html" %}
+{% block title %}
+    PikkujouluVekotin
+{% endblock %}
+
+{% block extrahead %}
+    <style>
+        div.led {
+            border: 1px solid #ccc;
+            float: left;
+            width: 20ex;
+            margin: 5px;
+            padding: 3px;
+        }
+    </style>
+
+    <script type="text/javascript" charset="utf-8">
+        var leds = {};
+        var socket = io.connect('http://' + document.domain + ':' + location.port);
+        socket.on('connect', function () {
+            socket.emit('my event', {data: 'CONNECTAATIO ON TAPAHTUNUT'});
+            $('#msg').append("CONNECTED!<br>");
+        });
+        socket.on('debug', function (data) {
+            if (data === void (0)) {
+                console.log("Got undefined data");
+                return;
+            }
+            console.log("DEBUG " + data.type);
+            console.log(data);
+        });
+
+        socket.on('ping', function (data) {
+            if (data === void (0)) {
+                console.log("Got undefined data");
+                return;
+            }
+            console.log("PING " + data.type);
+            console.log(data);
+            if (data.dev in leds) {
+                console.log("Led device exists: " + data.dev);
+            } else {
+                console.log("New led device: " + data.dev);
+                $('#msg').append("<div class='led' id='" + data.dev + "'>" + data.dev + "</div>");
+                leds[data.dev] = 1;
+            }
+            console.log(leds);
+        });
+
+        $("button").on("click", function () {
+            socket.emit('my event', {data: 'Button pressed!'});
+        });
+
+    </script>
+{% endblock %}
+
+{% block body %}
+    <h2>{{ self.title() }}</h2>
+    <div id="msg"></div>
+    <div style="clear: both"></div>
+
+    <!-- Just experimenting -->
+    <button>SEND STATIC MESSAGE</button>
+
+    <script type="text/javascript">
+
+        $("#msg").on("click", '.led', function () {
+            var dev = $(this).attr('id');
+            console.log("LED clicked, id: " + dev);
+            socket.emit('ledclick', {data: 'LED clicked!', dev: dev});
+        });
+
+        $("button").on("click", function () {
+            socket.emit('buttonclick', {data: 'Button pressed!'});
+        });
+
+    </script>
+
+{% endblock %}

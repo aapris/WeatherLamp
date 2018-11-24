@@ -1,0 +1,10 @@
+Flask-SocketIO
+Flask-MQTT
+Flask-Bootstrap
+Flask
+paho-mqtt
+requests
+gevent
+gunicorn
+pytest
+pytest-runner

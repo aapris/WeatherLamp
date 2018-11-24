@@ -1,0 +1,3 @@
+MQTT_HOST = '127.0.0.1'
+MQTT_PORT = 1883
+SECRET_KEY = b'Xv!y2L"F4QAz\n\xec]/'
