@@ -5,13 +5,13 @@
    MIT license
 
   NOTE
-  You must install libraries below using Arduino IDE's 
+  You must install libraries below using Arduino IDE's
   Sketch --> Include Library --> Manage Libraries... command
 
    PubSubClient (version >= 2.6.0 by Nick O'Leary)
    ArduinoJson (version > 5.13 < 6.0 by Benoit Blanchon)
    WiFiManager (version >= 0.14.0 by tzapu)
-   
+
  **************************************************************************************/
 
 #include "settings.h"             // Remember to copy settings-example.h to settings.h and check all values!
@@ -23,7 +23,7 @@
 #include <ESP8266WebServer.h>     // Local WebServer used to serve the configuration portal
 #include <WiFiManager.h>          // https://github.com/tzapu/WiFiManager WiFi Configuration Magic
 #ifndef FastLED
-  #include <FastLED.h>
+#include <FastLED.h>
 #endif
 
 
@@ -62,7 +62,7 @@ WiFiClient wifiClient;
 WiFiManager wifiManager;
 PubSubClient client(MQTT_SERVER, 1883, callback, wifiClient);
 String mac_str;
-byte mac[6]; 
+byte mac[6];
 char macAddr[13];
 unsigned long lastPing = 0;
 char pingTopic[30];
@@ -125,12 +125,12 @@ void setup() {
   Serial.println("Init FastLED");
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
   // FastLED.addLeds<LED_TYPE, LED_PIN, CLK_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
-  
+
   FastLED.setBrightness(  BRIGHTNESS );
-  
+
   currentPalette = RainbowColors_p;
   currentBlending = LINEARBLEND;
-  
+
 }
 
 void loop() {
@@ -145,14 +145,14 @@ void loop() {
     lastPing = now;
     SendPingToMQTT();
   }
-  runLedEffect();  
+  runLedEffect();
   FastLED.show();
   FastLED.delay(1000 / UPDATES_PER_SECOND);
 }
 
 /**
- * Mode is switched always when a valid MQTT message is received
- */
+   Mode is switched always when a valid MQTT message is received
+*/
 void switchMode(byte* payload, unsigned int length) {
   // Check that mode is valid
   if ((payload[1] < '0') || (payload[1] > '0')) {
@@ -203,9 +203,9 @@ void switchMode(byte* payload, unsigned int length) {
 
 
 void FillLEDsFromPaletteColors() {
-  for( int i = 0; i < NUM_LEDS; i++) {
-      leds[i] = ColorFromPalette( currentPalette, colorIndex, brightness, currentBlending);
-      colorIndex += 1;
+  for ( int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = ColorFromPalette( currentPalette, colorIndex, brightness, currentBlending);
+    colorIndex += 1;
   }
 }
 
