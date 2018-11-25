@@ -167,30 +167,38 @@ void switchMode(byte* payload, unsigned int length) {
   // OceanColors_p, CloudColors_p, LavaColors_p, ForestColors_p, and PartyColors_p.
   switch (payload[2]) {
     case '0':
-      Serial.println("Switch to PartyColors_p");
-      currentPalette = PartyColors_p;
+      Serial.println("Switch to RainbowColors_p");
+      currentPalette = RainbowColors_p;
       break;
     case '1':
+      Serial.println("Switch to RainbowStripeColors_p");
+      currentPalette = RainbowStripeColors_p;
+      break;
+    case '2':
       Serial.println("Switch to OceanColors_p");
       currentPalette = OceanColors_p;
       break;
-    case '2':
+    case '3':
+      Serial.println("Switch to CloudColors_p");
+      currentPalette = CloudColors_p;
+      break;
+    case '4':
       Serial.println("Switch to LavaColors_p");
       currentPalette = LavaColors_p;
       break;
-    case '3':
+    case '5':
       Serial.println("Switch to ForestColors_p");
       currentPalette = ForestColors_p;
       break;
-    case '4':
+    case '6':
       Serial.println("Switch to PartyColors_p");
       currentPalette = PartyColors_p;
       break;
     default:
-      // something
+      Serial.print("Invalid effect: ");
+      Serial.println(payload[2]);
       break;
-  }  
-
+  }
 }
 
 
