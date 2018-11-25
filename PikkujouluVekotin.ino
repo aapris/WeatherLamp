@@ -27,7 +27,6 @@
 #endif
 
 
-
 // I2C settings
 // #define SDA     D2
 // #define SCL     D1
@@ -35,50 +34,26 @@
 // Move to settings, perhaps?
 CRGBPalette16 currentPalette;
 TBlendType    currentBlending;
-
+uint8_t currentMode = '0';
+uint8_t brightness = BRIGHTNESS;
+static uint8_t startIndex = 0;
+uint8_t colorIndex = 0;
 
 
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived in topic: ");
   Serial.println(topic);
-  Serial.print("Message:");
+  Serial.print("Message (");
+  Serial.print(length);
+  Serial.print("B):");
   for (int i = 0; i < length; i++) {
     Serial.print((char)payload[i]);
   }
   Serial.println();
   if (payload[0] == '0') {
     Serial.println("Protocol version was 0 as expected");
+    switchMode(payload, length);
   }
-
-  // There are several different palettes of colors demonstrated here.
-  //
-  // FastLED provides several 'preset' palettes: RainbowColors_p, RainbowStripeColors_p,
-  // OceanColors_p, CloudColors_p, LavaColors_p, ForestColors_p, and PartyColors_p.
-  switch (payload[1]) {
-    case '0':
-      Serial.println("Switch to PartyColors_p");
-      currentPalette = PartyColors_p;
-      break;
-    case '1':
-      Serial.println("Switch to OceanColors_p");
-      currentPalette = OceanColors_p;
-      break;
-    case '2':
-      Serial.println("Switch to LavaColors_p");
-      currentPalette = LavaColors_p;
-      break;
-    case '3':
-      Serial.println("Switch to ForestColors_p");
-      currentPalette = ForestColors_p;
-      break;
-    case '4':
-      Serial.println("Switch to PartyColors_p");
-      currentPalette = PartyColors_p;
-      break;
-    default:
-      // something
-      break;
-  }  
   Serial.println("-----------------------");
 }
 
@@ -170,29 +145,72 @@ void loop() {
     lastPing = now;
     SendPingToMQTT();
   }
-//  runLedEffect();  
-  static uint8_t startIndex = 0;
-  startIndex = startIndex + 1; /* motion speed */
-
-  FillLEDsFromPaletteColors( startIndex);
-  
+  runLedEffect();  
   FastLED.show();
   FastLED.delay(1000 / UPDATES_PER_SECOND);
-  
 }
 
-void FillLEDsFromPaletteColors( uint8_t colorIndex)
-{
-    uint8_t brightness = BRIGHTNESS;
-    
-    for( int i = 0; i < NUM_LEDS; i++) {
-        leds[i] = ColorFromPalette( currentPalette, colorIndex, brightness, currentBlending);
-        colorIndex += 3;
-    }
+/**
+ * Mode is switched always when a valid MQTT message is received
+ */
+void switchMode(byte* payload, unsigned int length) {
+  // Check that mode is valid
+  if ((payload[1] < '0') || (payload[1] > '0')) {
+    Serial.print("Invalid mode: ");
+    Serial.println(payload[1]);
+  }
+  currentMode = payload[1];
+  colorIndex = 0;
+  // There are several different palettes of colors demonstrated here.
+  //
+  // FastLED provides several 'preset' palettes: RainbowColors_p, RainbowStripeColors_p,
+  // OceanColors_p, CloudColors_p, LavaColors_p, ForestColors_p, and PartyColors_p.
+  switch (payload[2]) {
+    case '0':
+      Serial.println("Switch to PartyColors_p");
+      currentPalette = PartyColors_p;
+      break;
+    case '1':
+      Serial.println("Switch to OceanColors_p");
+      currentPalette = OceanColors_p;
+      break;
+    case '2':
+      Serial.println("Switch to LavaColors_p");
+      currentPalette = LavaColors_p;
+      break;
+    case '3':
+      Serial.println("Switch to ForestColors_p");
+      currentPalette = ForestColors_p;
+      break;
+    case '4':
+      Serial.println("Switch to PartyColors_p");
+      currentPalette = PartyColors_p;
+      break;
+    default:
+      // something
+      break;
+  }  
+
+}
+
+
+void FillLEDsFromPaletteColors() {
+  for( int i = 0; i < NUM_LEDS; i++) {
+      leds[i] = ColorFromPalette( currentPalette, colorIndex, brightness, currentBlending);
+      colorIndex += 1;
+  }
 }
 
 void runLedEffect() {
-  // update led effect in this function
+  switch (currentMode) {
+    case '0':
+      FillLEDsFromPaletteColors();
+      break;
+    default:
+      Serial.println("Got invalid mode (in runLedEffect)");
+      break;
+
+  }
 }
 
 void SendPingToMQTT() {
