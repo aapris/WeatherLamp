@@ -15,41 +15,6 @@
     </style>
 
     <script type="text/javascript" charset="utf-8">
-        var leds = {};
-        var socket = io.connect('http://' + document.domain + ':' + location.port);
-        socket.on('connect', function () {
-            socket.emit('my event', {data: 'CONNECTAATIO ON TAPAHTUNUT'});
-            $('#msg').append("CONNECTED!<br>");
-        });
-        socket.on('debug', function (data) {
-            if (data === void (0)) {
-                console.log("Got undefined data");
-                return;
-            }
-            console.log("DEBUG " + data.type);
-            console.log(data);
-        });
-
-        socket.on('ping', function (data) {
-            if (data === void (0)) {
-                console.log("Got undefined data");
-                return;
-            }
-            console.log("PING " + data.type);
-            console.log(data);
-            if (data.dev in leds) {
-                console.log("Led device exists: " + data.dev);
-            } else {
-                console.log("New led device: " + data.dev);
-                $('#msg').append("<div class='led' id='" + data.dev + "'>" + data.dev + "</div>");
-                leds[data.dev] = 1;
-            }
-            console.log(leds);
-        });
-
-        $("button").on("click", function () {
-            socket.emit('my event', {data: 'Button pressed!'});
-        });
 
     </script>
 {% endblock %}

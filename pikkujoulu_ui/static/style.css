@@ -112,10 +112,34 @@ button.mode_btn {
     width: 80%;
 
 }
+
 .urlfield {
     font-size: 70%;
 }
 
 .statusfield {
     color: red;
+}
+
+@keyframes highlight {
+    0% {
+        background: #ff6666;
+    }
+    100% {
+        background: none;
+    }
+}
+
+.highlight {
+    animation: highlight 1s;
+}
+
+div.led {
+    color: #000;
+    background-color: #dfd;
+}
+
+div.outdated {
+    color: #666;
+    background-color: #ccc;
 }
