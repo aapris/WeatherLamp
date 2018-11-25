@@ -18,7 +18,7 @@ from flask_bootstrap import Bootstrap
 import eventlet
 
 try:
-    from .pikkujoulu_ui_config import MQTT_HOST, MQTT_PORT, SECRET_KEY
+    from .pikkujoulu_ui_config import MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS, SECRET_KEY
 except ImportError as err:
     print('\n\nNo pikkujoulu_ui_config found. Did you remember to')
     print('    cp pikkujoulu_ui_config_example.py pikkujoulu_ui_config.py')
@@ -38,8 +38,8 @@ app.config['SECRET_KEY'] = SECRET_KEY
 # MQTT config
 app.config['MQTT_BROKER_URL'] = MQTT_HOST
 app.config['MQTT_BROKER_PORT'] = MQTT_PORT
-# app.config['MQTT_USERNAME'] = ''  # set the username here if you need authentication for the broker
-# app.config['MQTT_PASSWORD'] = ''  # set the password here if the broker demands authentication
+app.config['MQTT_USERNAME'] = MQTT_USER
+app.config['MQTT_PASSWORD'] = MQTT_PASS
 app.config['MQTT_KEEPALIVE'] = 5  # set the time interval for sending a ping to the broker to 5 seconds
 app.config['MQTT_TLS_ENABLED'] = False  # set TLS to disabled for testing purposes
 
@@ -48,7 +48,7 @@ mqtt = Mqtt(app)
 bootstrap = Bootstrap(app)
 
 # MQTT stuff
-topic = '#'
+topic = 'led/#'
 topic2 = 'led/control'
 port = 1883
 
@@ -96,7 +96,8 @@ def handle_message(message):
 def handle_ledclick_event(json):
     print('received json: ' + str(json))
     topic = 'led/control/{}'.format(json['dev'])
-    mqtt.publish(topic, b'00aa')
+    msg = b'002\xff\x00\x00'
+    mqtt.publish(topic, msg)
 
 
 @socketio.on('buttonclick')
