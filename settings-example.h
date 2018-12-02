@@ -12,8 +12,8 @@
 #ifndef FastLED
   #include <FastLED.h>
 #endif
-#define LED_PIN     D7 
-#define CLK_PIN     D5 
+#define LED_PIN     D4
+#define CLK_PIN     D5
 #define BRIGHTNESS  150
 #define LED_TYPE    WS2812B
 // #define LED_TYPE    LPD8806
