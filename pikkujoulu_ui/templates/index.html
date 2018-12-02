@@ -93,7 +93,9 @@ body {
   </div>
 </div>
 <div class="container">
-    <button>SEND STATIC MESSAGE</button>
+    <button>RED</button>
+    <button>GREEN</button>
+    <button>BLUE</button>
     <!-- Just experimenting -->
 </div>
 
@@ -150,8 +152,8 @@ socket.on('debug', function (data) {
         // console.log("Got undefined data");
         return;
     }
-    console.log("DEBUG ");
-    console.log(data);
+    debug_log("DEBUG ");
+    debug_log(data);
 });
 
 socket.on('ping', function (data) {
@@ -182,7 +184,8 @@ $("#msg").on("click", '.led', function () {
 });
 
 $("button").on("click", function () {
-    socket.emit('buttonclick', {data: 'Button pressed!'});
+    // console.log($(this).text());
+    socket.emit('buttonclick', {data: 'Button pressed!', color: $(this).text()});
 });
 
 </script>

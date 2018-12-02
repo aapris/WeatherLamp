@@ -132,8 +132,24 @@ def handle_ledclick_event(json):
 
 
 @socketio.on('buttonclick')
-def handle_my_custom_event(json):
+def handle_buttonclick_event(json):
     debug('received json: ' + str(json))
+    client_rooms = [x for x in rooms() if len(x) < 30]
+    if len(client_rooms) == 1:
+        room = client_rooms[0]
+    else:
+        room = 'ERROR_IN_ROOM'
+    topic = '{}/{}'.format(topic2, room)
+    color = b'\xff\\xff\xff'
+    if json['color'] == 'RED':
+        color = b'\xff\x00\x00'
+    elif json['color'] == 'GREEN':
+        color = b'\x00\xff\x00'
+    elif json['color'] == 'BLUE':
+        color = b'\x00\x00\xff'
+    random_mode = '{}'.format(random.randint(0, 5)).encode()  # returns byte '0'..'5'
+    msg = b'01' + color
+    mqtt.publish(topic, msg)
 
 
 @app.route('/')
