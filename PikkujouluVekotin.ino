@@ -31,6 +31,13 @@
 // #define SDA     D2
 // #define SCL     D1
 
+//define your default values here, if there are different values in config.json, they are overwritten.
+char mqtt_server[40] = MQTT_SERVER;
+char mqtt_port[6] = MQTT_PORT;
+char mqtt_user[34] = MQTT_USER;
+char mqtt_password[34] = MQTT_PASSWORD;
+char room_token[34] = ROOM_TOKEN;
+
 // Move to settings, perhaps?
 CRGBPalette16 currentPalette;
 TBlendType    currentBlending;
@@ -65,8 +72,9 @@ String mac_str;
 byte mac[6];
 char macAddr[13];
 unsigned long lastPing = 0;
-char pingTopic[30];
-char controlTopic[30];
+char pingTopic[50];
+char controlTopic[50];
+char controlTopicBrc[50];
 
 /* Sensor variables */
 
@@ -92,10 +100,12 @@ void MqttSetup() {
     Serial.println("Connected to MQTT broker");
     Serial.print("Publish topic is: ");
     Serial.println(pingTopic);
-    Serial.print("Subscribe topic is: ");
+    Serial.println("Subscribe topics are: ");
     Serial.println(controlTopic);
+    Serial.println(controlTopicBrc);
     SendPingToMQTT();
     client.subscribe(controlTopic);
+    client.subscribe(controlTopicBrc);
   }
   else {
     Serial.println("MQTT connect failed");
@@ -107,20 +117,51 @@ void MqttSetup() {
 }
 
 void setup() {
+  WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, 40);
+  WiFiManagerParameter custom_mqtt_port("port", "mqtt port", mqtt_port, 6);
+  WiFiManagerParameter custom_mqtt_user("user", "mqtt user", mqtt_user, 32);
+  WiFiManagerParameter custom_mqtt_password("password", "mqtt password", mqtt_password, 32);
+  WiFiManagerParameter custom_room_token("token", "room token", room_token, 32);
+  //add all your parameters here
+  wifiManager.addParameter(&custom_mqtt_server);
+  wifiManager.addParameter(&custom_mqtt_port);
+  wifiManager.addParameter(&custom_mqtt_user);
+  wifiManager.addParameter(&custom_mqtt_password);
+  wifiManager.addParameter(&custom_room_token);
+  // wifiManager.resetSettings();
   mac_str = WiFi.macAddress();
   WiFi.macAddress(mac);
-  sprintf(macAddr, "%2X%2X%2X%2X%2X%2X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  sprintf(pingTopic, "%s/%s", MQTT_PUB_TOPIC, macAddr);
-  sprintf(controlTopic, "%s/%s", MQTT_SUB_TOPIC, macAddr);
   // Wire.begin(SDA, SCL);
   Serial.begin(115200);
   Serial.println();
   Serial.println();
+  //read updated parameters
+  strcpy(mqtt_server, custom_mqtt_server.getValue());
+  strcpy(mqtt_port, custom_mqtt_port.getValue());
+  strcpy(mqtt_user, custom_mqtt_user.getValue());
+  strcpy(mqtt_password, custom_mqtt_password.getValue());
+  strcpy(room_token, custom_room_token.getValue());
+  Serial.println(mqtt_server);
+  Serial.println(mqtt_port);
+  Serial.println(mqtt_user);
+  Serial.println(mqtt_password);
+  Serial.println(room_token);
+  sprintf(macAddr, "%2X%2X%2X%2X%2X%2X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  if (strlen(room_token) == 0) {
+    sprintf(pingTopic, "%s/%s", MQTT_PUB_TOPIC, macAddr);
+    sprintf(controlTopic, "%s/%s", MQTT_SUB_TOPIC, macAddr);
+    sprintf(controlTopicBrc, "%s/%s", MQTT_SUB_TOPIC, macAddr);
+  } else {
+    sprintf(pingTopic, "%s/%s/%s", MQTT_PUB_TOPIC, room_token, macAddr);
+    sprintf(controlTopic, "%s/%s/%s", MQTT_SUB_TOPIC, room_token, macAddr);  
+    sprintf(controlTopicBrc, "%s/%s", MQTT_SUB_TOPIC, room_token);
+  }
   char ap_name[30];
   sprintf(ap_name, "%s_%s", AP_NAME, macAddr);
   Serial.print("AP name would be: ");
   Serial.println(ap_name);
   wifiManager.autoConnect(ap_name);
+  
   MqttSetup();
   Serial.println("Init FastLED");
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
@@ -205,7 +246,7 @@ void switchMode(byte* payload, unsigned int length) {
 void FillLEDsFromPaletteColors() {
   for ( int i = 0; i < NUM_LEDS; i++) {
     leds[i] = ColorFromPalette( currentPalette, colorIndex, brightness, currentBlending);
-    colorIndex += 1;
+    colorIndex += 3;
   }
 }
 
