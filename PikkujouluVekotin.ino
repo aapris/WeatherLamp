@@ -46,6 +46,9 @@ uint8_t brightness = BRIGHTNESS;
 static uint8_t startIndex = 0;
 uint8_t colorIndex = 0;
 
+uint8_t r = 0;
+uint8_t g = 0;
+uint8_t b = 0;
 
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived in topic: ");
@@ -59,8 +62,33 @@ void callback(char* topic, byte* payload, unsigned int length) {
   Serial.println();
   if (payload[0] == '0') {
     Serial.println("Protocol version was 0 as expected");
-    switchMode(payload, length);
   }
+  // Check that mode is valid
+  if ((payload[1] < '0') || (payload[1] > '1')) {
+    Serial.print("Invalid mode: ");
+    Serial.println(payload[1]);
+    return;
+  }
+  currentMode = payload[1];
+
+  if (payload[0] == '0') {
+    Serial.println("Protocol version was 0 as expected");
+  }
+
+  switch (currentMode) {
+    case '0':
+      Serial.println("Mode 0: predefined palette effect");
+      switchMode(payload, length);
+      break;
+    case '1':
+      Serial.println("Mode 1: Solid color");
+      setSolidColor(payload, length);
+      break;
+    default:
+      Serial.println("Unknown mode");
+      break;
+  }    
+
   Serial.println("-----------------------");
 }
 
@@ -153,7 +181,7 @@ void setup() {
     sprintf(controlTopicBrc, "%s/%s", MQTT_SUB_TOPIC, macAddr);
   } else {
     sprintf(pingTopic, "%s/%s/%s", MQTT_PUB_TOPIC, room_token, macAddr);
-    sprintf(controlTopic, "%s/%s/%s", MQTT_SUB_TOPIC, room_token, macAddr);  
+    sprintf(controlTopic, "%s/%s/%s", MQTT_SUB_TOPIC, room_token, macAddr);
     sprintf(controlTopicBrc, "%s/%s", MQTT_SUB_TOPIC, room_token);
   }
   char ap_name[30];
@@ -161,7 +189,7 @@ void setup() {
   Serial.print("AP name would be: ");
   Serial.println(ap_name);
   wifiManager.autoConnect(ap_name);
-  
+
   MqttSetup();
   Serial.println("Init FastLED");
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
@@ -195,12 +223,6 @@ void loop() {
    Mode is switched always when a valid MQTT message is received
 */
 void switchMode(byte* payload, unsigned int length) {
-  // Check that mode is valid
-  if ((payload[1] < '0') || (payload[1] > '0')) {
-    Serial.print("Invalid mode: ");
-    Serial.println(payload[1]);
-  }
-  currentMode = payload[1];
   colorIndex = 0;
   // There are several different palettes of colors demonstrated here.
   //
@@ -242,10 +264,28 @@ void switchMode(byte* payload, unsigned int length) {
   }
 }
 
+/**
+   Mode is switched always when a valid MQTT message is received
+*/
+void setSolidColor(byte* payload, unsigned int length) {
+  r = payload[2];
+  g = payload[3];
+  b = payload[4];
+  Serial.println(r);
+  Serial.println(g);
+  Serial.println(b);
+}
+
 void FillLEDsFromPaletteColors(uint8_t colorIndex) {
   for ( int i = 0; i < NUM_LEDS; i++) {
     leds[i] = ColorFromPalette( currentPalette, colorIndex, brightness, currentBlending);
     colorIndex += 3;
+  }
+}
+
+void FillLEDsWithSolidColor() {
+  for ( int i = 0; i < NUM_LEDS; i++) {
+    leds[i].setRGB( r, g, b);
   }
 }
 
@@ -256,6 +296,9 @@ void runLedEffect() {
       startIndex = startIndex + 1; /* motion speed */
       FillLEDsFromPaletteColors(startIndex);
       break;
+    case '1':
+      FillLEDsWithSolidColor();
+      break;      
     default:
       Serial.println("Got invalid mode (in runLedEffect)");
       break;
