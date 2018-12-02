@@ -242,8 +242,7 @@ void switchMode(byte* payload, unsigned int length) {
   }
 }
 
-
-void FillLEDsFromPaletteColors() {
+void FillLEDsFromPaletteColors(uint8_t colorIndex) {
   for ( int i = 0; i < NUM_LEDS; i++) {
     leds[i] = ColorFromPalette( currentPalette, colorIndex, brightness, currentBlending);
     colorIndex += 3;
@@ -253,7 +252,9 @@ void FillLEDsFromPaletteColors() {
 void runLedEffect() {
   switch (currentMode) {
     case '0':
-      FillLEDsFromPaletteColors();
+      static uint8_t startIndex = 0;
+      startIndex = startIndex + 1; /* motion speed */
+      FillLEDsFromPaletteColors(startIndex);
       break;
     default:
       Serial.println("Got invalid mode (in runLedEffect)");
