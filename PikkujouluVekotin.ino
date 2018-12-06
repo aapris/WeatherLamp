@@ -307,9 +307,8 @@ void runLedEffect() {
 }
 
 void SendPingToMQTT() {
-  char cstr[16];
-  // itoa(millis(), cstr, 10);
-  sprintf(cstr, "%d,%d", NUM_LEDS, millis());
+  char cstr[64];
+  snprintf(cstr, sizeof(cstr), "%d,%c,%d,%d", NUM_LEDS, currentMode, brightness, millis());
   Serial.print(pingTopic);
   Serial.print(" ");
   Serial.println(cstr);
