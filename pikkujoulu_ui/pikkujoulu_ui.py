@@ -139,16 +139,17 @@ def handle_buttonclick_event(json):
         room = client_rooms[0]
     else:
         room = 'ERROR_IN_ROOM'
+    msg = b'01'
     topic = '{}/{}'.format(topic2, room)
     color = b'\xff\\xff\xff'
     if json['color'] == 'RED':
-        color = b'\xff\x00\x00'
+        msg += b'\xff\x00\x00'
     elif json['color'] == 'GREEN':
-        color = b'\x00\xff\x00'
+        msg += b'\x00\xff\x00'
     elif json['color'] == 'BLUE':
-        color = b'\x00\x00\xff'
-    random_mode = '{}'.format(random.randint(0, 5)).encode()  # returns byte '0'..'5'
-    msg = b'01' + color
+        msg += b'\x00\x00\xff'
+    elif json['color'] == 'EFFECT':
+        msg = b'020'
     mqtt.publish(topic, msg)
 
 
