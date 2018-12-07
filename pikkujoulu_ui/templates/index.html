@@ -6,187 +6,196 @@
 {% endblock %}
 
 {% block styles %}
-<link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='bootstrap.min.css') }}">
-<link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='style.css') }}">
-<style type="text/css">
-div.led {
-    border: 2px solid #ccc;
-    float: left;
-    width: 20ex;
-    margin: 5px;
-    padding: 3px;
-    border-radius: 3px;
-}
-body {
-    margin-top: 60px;
-}
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='bootstrap.min.css') }}">
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='style.css') }}">
+    <style type="text/css">
+        div.led {
+            border: 2px solid #ccc;
+            float: left;
+            width: 20ex;
+            margin: 5px;
+            padding: 3px;
+            border-radius: 3px;
+        }
 
-#connected {
-    border: 2px solid #ccc;
-    margi-top: 8px;
-    padding: 2px;
-    border-radius: 3px;
-    vertical-align: baseline;
-}
-</style>
+        body {
+            margin-top: 60px;
+        }
+    </style>
 {% endblock %}
 
 {% block navbar %}
     <nav class="navbar navbar-expand-md navbar-dark bg-dark fixed-top">
-      <a class="navbar-brand" href="#">PikkuJouluVekotin {{ roomname }}</a>
-      <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarsExampleDefault" aria-controls="navbarsExampleDefault" aria-expanded="false" aria-label="Toggle navigation">
-        <span class="navbar-toggler-icon"></span>
-      </button>
+        <a class="navbar-brand" href="#">LedVekotin: {{ roomname }}</a>
+        <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarsExampleDefault"
+                aria-controls="navbarsExampleDefault" aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
 
-      <div class="collapse navbar-collapse" id="navbarsExampleDefault">
-        <ul class="navbar-nav mr-auto">
-          <li class="nav-item active">
-            <a class="nav-link" href="#">Home <span class="sr-only">(current)</span></a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link" href="#">Help</a>
-          </li>
-<!--
-          <li class="nav-item">
-            <a class="nav-link disabled" href="#">Disabled</a>
-          </li>
-          <li class="nav-item dropdown">
-            <a class="nav-link dropdown-toggle" href="https://example.com" id="dropdown01" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Dropdown</a>
-            <div class="dropdown-menu" aria-labelledby="dropdown01">
-              <a class="dropdown-item" href="#">Action</a>
-              <a class="dropdown-item" href="#">Another action</a>
-              <a class="dropdown-item" href="#">Something else here</a>
-            </div>
-          </li>
--->
-        </ul>
-<!--
-        <form class="form-inline my-2 my-lg-0">
-          <input class="form-control mr-sm-2" type="text" placeholder="Search" aria-label="Search">
-          <button class="btn btn-outline-success my-2 my-sm-0" type="submit">Search</button>
-        </form>
--->
-      </div>
+        <div class="collapse navbar-collapse" id="navbarsExampleDefault">
+            <ul class="navbar-nav mr-auto">
+                <li class="nav-item active">
+                    <a class="nav-link" href="#">Home <span class="sr-only">(current)</span></a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="#" id="connected">Status</a>
+                </li>
+                <!--
+                          <li class="nav-item">
+                            <a class="nav-link disabled" href="#">Disabled</a>
+                          </li>
+                          <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="https://example.com" id="dropdown01" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Dropdown</a>
+                            <div class="dropdown-menu" aria-labelledby="dropdown01">
+                              <a class="dropdown-item" href="#">Action</a>
+                              <a class="dropdown-item" href="#">Another action</a>
+                              <a class="dropdown-item" href="#">Something else here</a>
+                            </div>
+                          </li>
+                -->
+            </ul>
+            <!--
+                    <form class="form-inline my-2 my-lg-0">
+                      <input class="form-control mr-sm-2" type="text" placeholder="Search" aria-label="Search">
+                      <button class="btn btn-outline-success my-2 my-sm-0" type="submit">Search</button>
+                    </form>
+            -->
+        </div>
     </nav>
 {% endblock %}
 
 
 {% block content %}
-<div class="container">
-  <div class="row">
-    <div class="col-sm">
-      <h2>{{ self.title() }} {{ roomname }}</h2>
+    <div class="container">
+        <div class="row">
+            <div class="col-sm">
+                <button class="btn">RED</button>
+                <button class="btn">GREEN</button>
+                <button class="btn">BLUE</button>
+                <button class="btn">EFFECT</button>
+            </div>
+        </div>
     </div>
-    <div class="col-sm">
-    <span class="align-bottom" id="connected">
-      STATUS
-    </span>
-    </div>
-    <div class="col-sm">
-      &nbsp;
-    </div>
-  </div>
-</div>
-<div class="container">
-  <div class="row">
-    <div class="col-sm" id="msg"></div>
-  </div>
-</div>
-<div class="container">
-    <button>RED</button>
-    <button>GREEN</button>
-    <button>BLUE</button>
     <!-- Just experimenting -->
-</div>
+    <div class="container">
+        <div class="row">
+            <div class="col-sm">
+                <div class="btn-group  btn-group-justified" data-toggle="buttons">
+                    <label class="btn btn-primary">
+                        <input type="radio" name="options" id="option1"> Option 1
+                    </label>
+                    <label class="btn btn-primary">
+                        <input type="radio" name="options" id="option2"> Option 2
+                    </label>
+                    <label class="btn btn-primary">
+                        <input type="radio" name="options" id="option3"> Option 3
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="container">
+        <div class="row">
+            <div class="col-sm" id="msg"></div>
+        </div>
+    </div>
 
 
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='jquery-3.3.1.min.js') }}"></script>
-<script src="{{ url_for('static', filename='socket.io-2.0.3.min.js') }}"></script>
-<script src="{{ url_for('static', filename='bootstrap.min.js') }}"></script>
-<!--
+    <script src="{{ url_for('static', filename='jquery-3.3.1.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='socket.io-2.0.3.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='bootstrap.min.js') }}"></script>
+    <!--
 <script src="{{ url_for('static', filename='main.js') }}"></script>
 -->
-<script type="text/javascript">
+    <script type="text/javascript">
 
-function updateLastSeen() {
-    var milliseconds = (new Date).getTime();
-    $(".led").each(function (index) {
-        var age = milliseconds - $(this).data('lastseen');
-        var age_str = Number.parseFloat(age/1000).toFixed(1);
-        $(this).find('.uptime').text('Seen: ' + age_str + ' sec ago');
-        if (age > 15000) {$(this).addClass("outdated");}
-        // console.log("AGE " + age);
-    });
-}
-setInterval(updateLastSeen, 1000);
+        function updateLastSeen() {
+            var milliseconds = (new Date).getTime();
+            $(".led").each(function (index) {
+                var age = milliseconds - $(this).data('lastseen');
+                var age_str = Number.parseFloat(age / 1000).toFixed(1);
+                $(this).find('.uptime').text('Seen: ' + age_str + ' sec ago');
+                if (age > 15000) {
+                    $(this).addClass("outdated");
+                }
+                // console.log("AGE " + age);
+            });
+        }
 
-function highlight(element_id){
-    $(element_id).addClass("highlight");
-    setTimeout(function () {
-          $(element_id).removeClass('highlight');
-    }, 1000);  // Timeout should be the same which is in style.css' .highlight
-}
+        setInterval(updateLastSeen, 100);
 
-var urlParams = new URLSearchParams(window.location.search);
-var debug = urlParams.has('debug');
-function debug_log(obj) {if (debug) {console.log(obj);}}
+        function highlight(element_id) {
+            $(element_id).addClass("highlight");
+            setTimeout(function () {
+                $(element_id).removeClass('highlight');
+            }, 1000);  // Timeout should be the same which is in style.css' .highlight
+        }
 
-var leds = {};
-var roomName = '{{ roomname }}';
-var namespace = '';
-var socketioUrl = location.protocol + '//' + document.domain + ':' + location.port + namespace;
-debug_log(socketioUrl);
-var socket = io.connect(socketioUrl, {
-    query: {roomName: roomName},
-});
+        var urlParams = new URLSearchParams(window.location.search);
+        var debug = urlParams.has('debug');
 
-socket.on('connect', function () {
-    $('#connected').text("CONNECTED!");
-});
+        function debug_log(obj) {
+            if (debug) {
+                console.log(obj);
+            }
+        }
 
-socket.on('debug', function (data) {
-    if (data === void (0)) {
-        // console.log("Got undefined data");
-        return;
-    }
-    debug_log("DEBUG ");
-    debug_log(data);
-});
+        var leds = {};
+        var roomName = '{{ roomname }}';
+        var namespace = '';
+        var socketioUrl = location.protocol + '//' + document.domain + ':' + location.port + namespace;
+        debug_log(socketioUrl);
+        var socket = io.connect(socketioUrl, {
+            query: {roomName: roomName},
+        });
 
-socket.on('ping', function (data) {
-    if (data === void (0)) {
-        debug_log("Got undefined data");
-        return;
-    }
-    var milliseconds = (new Date).getTime();
-    var _id = data.dev;  // DIV's id value
-    if (data.dev in leds) {
-        // console.log("Led device exists: " + data.dev);
-    } else {
-        console.log("New led device: " + data.dev);
-        $('#msg').append("<div class='led' id='" + _id + "'>" + data.dev + "<br><span class='uptime'>Seen: 0.0 sec ago</span></div>");
-        leds[data.dev] = 1;
-    }
-    var leddiv = $('#' + _id);
-    leddiv.data('lastseen', milliseconds);
-    leddiv.removeClass("outdated");
-    updateLastSeen();
-    highlight('#' + _id);
-});
+        socket.on('connect', function () {
+            $('#connected').text("CONNECTED!");
+        });
 
-$("#msg").on("click", '.led', function () {
-    var dev = $(this).attr('id');
-    console.log("LED clicked, id: " + dev);
-    socket.emit('ledclick', {data: 'LED clicked!', dev: dev});
-});
+        socket.on('debug', function (data) {
+            if (data === void (0)) {
+                // console.log("Got undefined data");
+                return;
+            }
+            debug_log("DEBUG ");
+            debug_log(data);
+        });
 
-$("button").on("click", function () {
-    // console.log($(this).text());
-    socket.emit('buttonclick', {data: 'Button pressed!', color: $(this).text()});
-});
+        socket.on('ping', function (data) {
+            if (data === void (0)) {
+                debug_log("Got undefined data");
+                return;
+            }
+            var milliseconds = (new Date).getTime();
+            var _id = data.dev;  // DIV's id value
+            if (data.dev in leds) {
+                // console.log("Led device exists: " + data.dev);
+            } else {
+                console.log("New led device: " + data.dev);
+                $('#msg').append("<div class='led' id='" + _id + "'>" + data.dev + "<br><span class='uptime'>Seen: 0.0 sec ago</span></div>");
+                leds[data.dev] = 1;
+            }
+            var leddiv = $('#' + _id);
+            leddiv.data('lastseen', milliseconds);
+            leddiv.removeClass("outdated");
+            updateLastSeen();
+            highlight('#' + _id);
+        });
 
-</script>
+        $("#msg").on("click", '.led', function () {
+            var dev = $(this).attr('id');
+            console.log("LED clicked, id: " + dev);
+            socket.emit('ledclick', {data: 'LED clicked!', dev: dev});
+        });
+
+        $("button").on("click", function () {
+            // console.log($(this).text());
+            socket.emit('buttonclick', {data: 'Button pressed!', color: $(this).text()});
+        });
+
+    </script>
 {% endblock %}
