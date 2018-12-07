@@ -42,6 +42,7 @@ char room_token[34] = ROOM_TOKEN;
 CRGBPalette16 currentPalette;
 TBlendType    currentBlending;
 uint8_t currentMode = '0';
+uint8_t activeEffect = '0';
 uint8_t brightness = BRIGHTNESS;
 static uint8_t startIndex = 0;
 uint8_t colorIndex = 0;
@@ -64,7 +65,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Serial.println("Protocol version was 0 as expected");
   }
   // Check that mode is valid
-  if ((payload[1] < '0') || (payload[1] > '1')) {
+  if ((payload[1] < '0') || (payload[1] > '2')) {
     Serial.print("Invalid mode: ");
     Serial.println(payload[1]);
     return;
@@ -83,6 +84,10 @@ void callback(char* topic, byte* payload, unsigned int length) {
     case '1':
       Serial.println("Mode 1: Solid color");
       setSolidColor(payload, length);
+      break;
+    case '2':
+      Serial.println("Mode 2: Active effect");
+      setActiveEffect(payload, length);
       break;
     default:
       Serial.println("Unknown mode");
@@ -258,7 +263,7 @@ void switchMode(byte* payload, unsigned int length) {
       currentPalette = PartyColors_p;
       break;
     default:
-      Serial.print("Invalid effect: ");
+      Serial.print("Invalid palette: ");
       Serial.println(payload[2]);
       break;
   }
@@ -276,6 +281,16 @@ void setSolidColor(byte* payload, unsigned int length) {
   Serial.println(b);
 }
 
+void setActiveEffect(byte* payload, unsigned int length) {
+  if ((payload[2] >= '0') && (payload[2] <= '2')) {
+    activeEffect = payload[2];
+    Serial.println("activeEffect set");
+  } else {
+    Serial.print("Invalid effect: ");
+    Serial.println(payload[2]);
+  }
+}
+
 void FillLEDsFromPaletteColors(uint8_t colorIndex) {
   for ( int i = 0; i < NUM_LEDS; i++) {
     leds[i] = ColorFromPalette( currentPalette, colorIndex, brightness, currentBlending);
@@ -283,11 +298,109 @@ void FillLEDsFromPaletteColors(uint8_t colorIndex) {
   }
 }
 
+
 void FillLEDsWithSolidColor() {
   for ( int i = 0; i < NUM_LEDS; i++) {
     leds[i].setRGB( r, g, b);
   }
 }
+
+void runActiveEffect() {
+  switch (activeEffect) {
+    case '0':
+      // Serial.println("Switch to Cylon");
+      Fire2012(); // run simulation frame
+      break;
+    case '1':
+      // Serial.println("Switch to Fire");
+      Fire2012(); // run simulation frame
+      break;
+    default:
+      // Serial.print("Invalid effect: ");
+      // Serial.println(activeEffect);
+      break;
+  }
+  
+}
+
+bool gReverseDirection = false;
+
+
+
+
+// Fire2012 by Mark Kriegsman, July 2012
+// as part of "Five Elements" shown here: http://youtu.be/knWiGsmgycY
+//// 
+// This basic one-dimensional 'fire' simulation works roughly as follows:
+// There's a underlying array of 'heat' cells, that model the temperature
+// at each point along the line.  Every cycle through the simulation, 
+// four steps are performed:
+//  1) All cells cool down a little bit, losing heat to the air
+//  2) The heat from each cell drifts 'up' and diffuses a little
+//  3) Sometimes randomly new 'sparks' of heat are added at the bottom
+//  4) The heat from each cell is rendered as a color into the leds array
+//     The heat-to-color mapping uses a black-body radiation approximation.
+//
+// Temperature is in arbitrary units from 0 (cold black) to 255 (white hot).
+//
+// This simulation scales it self a bit depending on NUM_LEDS; it should look
+// "OK" on anywhere from 20 to 100 LEDs without too much tweaking. 
+//
+// I recommend running this simulation at anywhere from 30-100 frames per second,
+// meaning an interframe delay of about 10-35 milliseconds.
+//
+// Looks best on a high-density LED setup (60+ pixels/meter).
+//
+//
+// There are two main parameters you can play with to control the look and
+// feel of your fire: COOLING (used in step 1 above), and SPARKING (used
+// in step 3 above).
+//
+// COOLING: How much does the air cool as it rises?
+// Less cooling = taller flames.  More cooling = shorter flames.
+// Default 50, suggested range 20-100 
+#define COOLING  55
+
+// SPARKING: What chance (out of 255) is there that a new spark will be lit?
+// Higher chance = more roaring fire.  Lower chance = more flickery fire.
+// Default 120, suggested range 50-200.
+#define SPARKING 120
+
+
+void Fire2012()
+{
+// Array of temperature readings at each simulation cell
+  static byte heat[NUM_LEDS];
+
+  // Step 1.  Cool down every cell a little
+    for( int i = 0; i < NUM_LEDS; i++) {
+      heat[i] = qsub8( heat[i],  random8(0, ((COOLING * 10) / NUM_LEDS) + 2));
+    }
+  
+    // Step 2.  Heat from each cell drifts 'up' and diffuses a little
+    for( int k= NUM_LEDS - 1; k >= 2; k--) {
+      heat[k] = (heat[k - 1] + heat[k - 2] + heat[k - 2] ) / 3;
+    }
+    
+    // Step 3.  Randomly ignite new 'sparks' of heat near the bottom
+    if( random8() < SPARKING ) {
+      int y = random8(7);
+      heat[y] = qadd8( heat[y], random8(160,255) );
+    }
+
+    // Step 4.  Map from heat cells to LED colors
+    for( int j = 0; j < NUM_LEDS; j++) {
+      CRGB color = HeatColor( heat[j]);
+      int pixelnumber;
+      if( gReverseDirection ) {
+        pixelnumber = (NUM_LEDS-1) - j;
+      } else {
+        pixelnumber = j;
+      }
+      leds[pixelnumber] = color;
+    }
+}
+
 
 void runLedEffect() {
   switch (currentMode) {
@@ -298,6 +411,9 @@ void runLedEffect() {
       break;
     case '1':
       FillLEDsWithSolidColor();
+      break;      
+    case '2':
+      runActiveEffect();
       break;      
     default:
       Serial.println("Got invalid mode (in runLedEffect)");
