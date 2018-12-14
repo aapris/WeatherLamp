@@ -148,8 +148,8 @@ def handle_buttonclick_event(json):
         msg += b'\x00\xff\x00'
     elif json['color'] == 'BLUE':
         msg += b'\x00\x00\xff'
-    elif json['color'] == 'EFFECT':
-        msg = b'020'
+    elif json['color'].startswith('E'):
+        msg = b'02' + bytes(json['color'][1], 'utf8')
     mqtt.publish(topic, msg)
 
 
