@@ -62,6 +62,11 @@ char controlTopicBrc[50];
 
 /* Sensor variables */
 
+void requestData();
+void requestData2();
+void runLedEffect();
+void Fire2012();
+
 void setup()
 {
   WiFiManagerParameter custom_http_url("server", "Data URL", http_url, 250);
@@ -87,7 +92,7 @@ void setup()
   Serial.println(longitude);
   // Serial.println(mqtt_password);
   // Serial.println(room_token);
-  // sprintf(macAddr, "%2X%2X%2X%2X%2X%2X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  sprintf(macAddr, "%2X%2X%2X%2X%2X%2X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   char ap_name[30];
   sprintf(ap_name, "%s_%s", AP_NAME, macAddr);
   Serial.print("AP name would be: ");
