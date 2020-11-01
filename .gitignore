@@ -1,6 +1,5 @@
-__pycache__
 .idea
-Pipfile
 settings.h
-pikkujoulu_ui_config.py
 no_git.txt
+.pio
+.vscode
