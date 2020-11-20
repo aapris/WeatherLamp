@@ -3,3 +3,5 @@ settings.h
 no_git.txt
 .pio
 .vscode
+*.bin
+*.json
