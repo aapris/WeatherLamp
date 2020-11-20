@@ -56,9 +56,6 @@ String mac_str;
 byte mac[6];
 char macAddr[13];
 unsigned long lastPing = 0;
-char pingTopic[50];
-char controlTopic[50];
-char controlTopicBrc[50];
 
 /* Sensor variables */
 
@@ -125,6 +122,9 @@ void requestData()
     {
       Serial.print("HTTP Response code: ");
       Serial.println(httpResponseCode);
+      Serial.print("NUM_LEDS: ");
+      Serial.println(NUM_LEDS);
+
       String payload = http.getString();
       Serial.println(payload);
       currentPalette = CRGBPalette16();
@@ -251,7 +251,7 @@ void FillLEDsFromPaletteColors(uint8_t colorIndex)
   for (int i = 0; i < NUM_LEDS; i++)
   {
     leds[i] = ColorFromPalette(currentPalette, colorIndex, brightness, currentBlending);
-    colorIndex += 8;
+    colorIndex += (int)255/NUM_LEDS;
   }
 }
 
