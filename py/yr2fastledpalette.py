@@ -19,12 +19,14 @@ user_agent = "WeatherLamp/0.1 github.com/aapris/WeatherLamp"
 
 
 COLOUR_CLEARSKY_NIGHT = [5, 18, 151]
+# COLOUR_CLEARSKY_DAY = [5, 18, 151]
 COLOUR_CLEARSKY_DAY = [20, 108, 214]
-COLOUR_PARTLYCLOUDY = [5, 18, 151]
-COLOUR_CLOUDY = [70, 254, 246]
-COLOUR_LIGHTRAIN = [90, 250, 1]
-COLOUR_RAIN = [252, 252, 1]
-COLOUR_HEAVYRAIN = [239, 133, 97]
+COLOUR_PARTLYCLOUDY = [40, 158, 154]
+#COLOUR_CLOUDY = [100, 250, 200]
+COLOUR_CLOUDY = [70, 200, 150]
+COLOUR_LIGHTRAIN = [90, 200, 1]
+COLOUR_RAIN = [202, 252, 1]
+COLOUR_HEAVYRAIN = [173, 133, 2]
 
 symbolmap = {
     **dict.fromkeys(
@@ -170,19 +172,15 @@ def parse_yrdata(args, yrdata):
     this_hour = datetime.datetime.now(tz=pytz.UTC).replace(
         minute=0, second=0, microsecond=0
     )
-    # tseries = cycle(yrdata["properties"]["timeseries"])
     tseries = yrdata["properties"]["timeseries"]
-    # curr = next(tseries)
     fore = []
     for t in tseries:
         ts = parse(t["time"])
         if this_hour > ts:
             continue
         fore.append(t)
-        # print(this_hour, ts)
         if len(fore) == 8:
             break
-    # print(json.dumps(fore[0], indent=4))
     colors = []
     for t in fore:
         if "next_1_hours" not in t["data"]:
@@ -192,7 +190,12 @@ def parse_yrdata(args, yrdata):
             symbol, variant = symbol_code.split("_")
         else:
             symbol, variant = symbol_code, None
-        colorwind = symbolmap[symbol] + [
+        prec = t["data"]["next_1_hours"]["details"]["precipitation_amount"]
+        if prec >= 3.0:
+            color = [80, 0, 80]
+        else:
+            color = symbolmap[symbol]
+        colorwind = color + [
             int(t["data"]["instant"]["details"]["wind_speed"] / 5)
         ]
         colors += colorwind * 2  # Add colors twice because we have 16 slots
@@ -202,6 +205,7 @@ def parse_yrdata(args, yrdata):
             variant,
             colorwind,
             t["data"]["instant"]["details"]["wind_speed"],
+            t["data"]["next_1_hours"]["details"]["precipitation_amount"],
         )
 
     if args.output is not None:
