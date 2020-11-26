@@ -19,14 +19,14 @@ user_agent = "WeatherLamp/0.1 github.com/aapris/WeatherLamp"
 
 
 COLOUR_CLEARSKY_NIGHT = [5, 18, 151]
-# COLOUR_CLEARSKY_DAY = [5, 18, 151]
 COLOUR_CLEARSKY_DAY = [20, 108, 214]
 COLOUR_PARTLYCLOUDY = [40, 158, 154]
-#COLOUR_CLOUDY = [100, 250, 200]
-COLOUR_CLOUDY = [70, 200, 150]
+COLOUR_CLOUDY = [70, 200, 140]
 COLOUR_LIGHTRAIN = [90, 200, 1]
+COLOUR_LIGHTRAIN_GT50 = [110, 180, 1]
 COLOUR_RAIN = [202, 252, 1]
 COLOUR_HEAVYRAIN = [173, 133, 2]
+COLOUR_VERYHEAVYRAIN = [143, 93, 2]
 
 symbolmap = {
     **dict.fromkeys(
@@ -190,23 +190,29 @@ def parse_yrdata(args, yrdata):
             symbol, variant = symbol_code.split("_")
         else:
             symbol, variant = symbol_code, None
+        # Handle very heavy rain
         prec = t["data"]["next_1_hours"]["details"]["precipitation_amount"]
         if prec >= 3.0:
-            color = [80, 0, 80]
+            color = COLOUR_VERYHEAVYRAIN
         else:
             color = symbolmap[symbol]
+        # Handle light rain with probability
+        prob_prec = t["data"]["next_1_hours"]["details"]["probability_of_precipitation"]
+        if symbol == 'lightrain' and prob_prec >= 70:
+            color = COLOUR_LIGHTRAIN_GT50
         colorwind = color + [
             int(t["data"]["instant"]["details"]["wind_speed"] / 5)
         ]
         colors += colorwind * 2  # Add colors twice because we have 16 slots
-        print(
+        print('{} {} {} {}% {}mm {} {}m/s'.format(
             t["time"],
             symbol,
             variant,
+            prob_prec,
+            prec,
             colorwind,
             t["data"]["instant"]["details"]["wind_speed"],
-            t["data"]["next_1_hours"]["details"]["precipitation_amount"],
-        )
+        ))
 
     if args.output is not None:
         arr = bytearray(colors)
