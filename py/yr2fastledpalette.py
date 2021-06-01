@@ -172,6 +172,9 @@ def parse_yrdata(args, yrdata):
     this_hour = datetime.datetime.now(tz=pytz.UTC).replace(
         minute=0, second=0, microsecond=0
     )
+    history_file = "/home/arista/yrdata/yrdata-{}.json".format(this_hour.isoformat().replace(":", "").replace("-", ""))
+    with open(history_file, "wt") as f:
+        f.write(json.dumps(yrdata, indent=2))
     tseries = yrdata["properties"]["timeseries"]
     fore = []
     for t in tseries:
@@ -198,7 +201,7 @@ def parse_yrdata(args, yrdata):
             color = symbolmap[symbol]
         # Handle light rain with probability
         prob_prec = t["data"]["next_1_hours"]["details"]["probability_of_precipitation"]
-        if symbol == 'lightrain' and prob_prec >= 70:
+        if symbol == 'lightrain' and prob_prec >= 25:
             color = COLOUR_LIGHTRAIN_GT50
         colorwind = color + [
             int(t["data"]["instant"]["details"]["wind_speed"] / 5)
