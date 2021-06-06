@@ -207,7 +207,7 @@ def yr_precipitation_to_df(args, yrdata, cast):
     last_halfhour = this_halfhour + datetime.timedelta(hours=8)
     # print(this_halfhour, last_halfhour)
     df_filtered: pd.DataFrame = dfr[(dfr.index >= this_halfhour) & (dfr.index < last_halfhour)]
-    print(df_filtered)
+    # print(df_filtered)
     return df_filtered
 
 
@@ -228,8 +228,8 @@ def create_output(args: argparse.Namespace):
     df = create_combined_forecast(args)
     colors = []
     for i in df.index:
-        # Take greater value of precipitations
-        if df["precipitation_now"][i] > df["precipitation_fore"][i]:
+        # Take always nowcast's precipitation, it should be the most accurate
+        if pd.notnull(df["precipitation_now"][i]):
             precipitation = df["precipitation_now"][i]
         else:
             precipitation = df["precipitation_fore"][i]
@@ -239,7 +239,6 @@ def create_output(args: argparse.Namespace):
             color = COLOUR_LIGHTRAIN
         else:
             color = symbolmap[df["symbol"][i]]
-
         # print(df['precipitation_now'][i], df['precipitation_fore'][i], precipitation)
         colors += color + [0]
     assert len(colors) == 64
