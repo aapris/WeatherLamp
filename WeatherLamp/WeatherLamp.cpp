@@ -1,19 +1,11 @@
 /**************************************************************************************
-   Sketch to illuminat RGB LED strip using weather forecast
-   Copyright 2020 Aapo Rista
-   MIT license
-
-  NOTE
-  You must install libraries below using Arduino IDE's
-  Sketch --> Include Library --> Manage Libraries... command
-
-   PubSubClient (version >= 2.6.0 by Nick O'Leary)
-   ArduinoJson (version > 5.13 < 6.0 by Benoit Blanchon)
-   WiFiManager (version >= 0.14.0 by tzapu)
-
+  Sketch to illuminate RGB LED strip using rain forecast
+  Copyright 2020-2021 Aapo Rista
+  MIT license
  **************************************************************************************/
 
-#include "settings.h" // Remember to copy settings-example.h to settings.h and check all values!
+#include <FS.h> // this needs to be first, or it all crashes and burns...
+#include "settings.h" // Remember to copy settings-example.h to settings.h and check all the values!
 #include <Wire.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
@@ -31,9 +23,10 @@
 // #define SDA     D2
 // #define SCL     D1
 
-// define your default values here, if there are different values in config.json, they are overwritten.
-char http_url[250] = "http://rista.net/?weatherlamp=true";
-char latitude[16] = "60.123";
+// Define URL, lat and lon default values here, if there are different values in config.json, they are overwritten.
+char http_url[150] = "http://weatherlamp.rista.net/yrweather.bin";
+// Helsinki city centre
+char latitude[16] = "60.172";
 char longitude[16] = "24.945";
 
 // Move to settings, perhaps?
@@ -57,46 +50,73 @@ byte mac[6];
 char macAddr[13];
 unsigned long lastPing = 0;
 
-/* Sensor variables */
+//flag for saving data
+bool shouldSaveConfig = false;
+
+//callback notifying us of the need to save config
+void saveConfigCallback () {
+  shouldSaveConfig = true;
+  Serial.print("Should save config: ");
+  Serial.println(shouldSaveConfig);
+}
 
 void requestData();
 void requestData2();
 void runLedEffect();
+void setupSpiffs();
+void saveConfig();
+
 
 void setup()
 {
-  WiFiManagerParameter custom_http_url("server", "Data URL", http_url, 250);
-  WiFiManagerParameter custom_latitude("port", "Latitude ° (60.172)", "60.172", 16);
-  WiFiManagerParameter custom_longitude("user", "Longitude ° (24.945)", longitude, 16);
+  Serial.begin(115200);
+  Serial.println();
+  Serial.println();
+  setupSpiffs();
+  wifiManager.setSaveConfigCallback(saveConfigCallback);
+
+  WiFiManagerParameter custom_http_url("http_url", "Data URL", http_url, 250);
+  WiFiManagerParameter custom_latitude("latitude", "Latitude ° (60.172)", latitude, 16);
+  WiFiManagerParameter custom_longitude("longitude", "Longitude ° (24.945)", longitude, 16);
   // Add all your parameters here
   wifiManager.addParameter(&custom_http_url);
   wifiManager.addParameter(&custom_latitude);
   wifiManager.addParameter(&custom_longitude);
+  // Reset settings - wipe credentials for testing
   // wifiManager.resetSettings();
   mac_str = WiFi.macAddress();
   WiFi.macAddress(mac);
-  // Wire.begin(SDA, SCL);
-  Serial.begin(115200);
-  Serial.println();
-  Serial.println();
-  //read updated parameters
-  strcpy(http_url, custom_http_url.getValue());
-  strcpy(latitude, custom_latitude.getValue());
-  strcpy(longitude, custom_longitude.getValue());
-  Serial.println(http_url);
-  Serial.println(latitude);
-  Serial.println(longitude);
-  // Serial.println(mqtt_password);
-  // Serial.println(room_token);
+
   sprintf(macAddr, "%2X%2X%2X%2X%2X%2X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   char ap_name[30];
   sprintf(ap_name, "%s_%s", AP_NAME, macAddr);
   Serial.print("AP name would be: ");
   Serial.println(ap_name);
   wifiManager.autoConnect(ap_name);
+
+  // Wire.begin(SDA, SCL);
+  // read updated parameters
+  strcpy(http_url, custom_http_url.getValue());
+  strcpy(latitude, custom_latitude.getValue());
+  strcpy(longitude, custom_longitude.getValue());
+  Serial.println(http_url);
+  Serial.println(latitude);
+  Serial.println(longitude);
+
+  // Save the custom parameters to FS
+  Serial.print("Setup Should save config: ");
+  Serial.println(shouldSaveConfig);
+  if (shouldSaveConfig) {
+    saveConfig();
+    shouldSaveConfig = false;
+  }
+
   Serial.println("Init FastLED");
-  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
-  // FastLED.addLeds<LED_TYPE, LED_PIN, CLK_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
+#ifdef CLKPIN
+  FastLED.addLeds<LED_TYPE, DATAPIN, CLKPIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
+#else
+  FastLED.addLeds<LED_TYPE, DATAPIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+#endif
 
   FastLED.setBrightness(BRIGHTNESS);
 
@@ -104,16 +124,80 @@ void setup()
   currentBlending = LINEARBLEND;
 }
 
+void setupSpiffs() 
+{
+  //clean FS, for testing
+  //Serial.println("Format FS...");
+  //SPIFFS.format();
+
+  // Read configuration from FS json
+  Serial.println("Mounting FS...");
+
+  if (SPIFFS.begin()) {
+    Serial.println("mounted file system");
+    if (SPIFFS.exists("/config.json")) {
+      //file exists, reading and loading
+      Serial.println("reading config file");
+      File configFile = SPIFFS.open("/config.json", "r");
+      if (configFile) {
+        Serial.println("opened config file");
+        size_t size = configFile.size();
+        // Allocate a buffer to store contents of the file.
+        std::unique_ptr<char[]> buf(new char[size]);
+        configFile.readBytes(buf.get(), size);
+        DynamicJsonDocument jsonBuffer(1024);
+        auto error = deserializeJson(jsonBuffer, buf.get());
+        serializeJson(jsonBuffer, Serial);
+        if (!error) {
+          Serial.println("\nParsed json");
+          strcpy(http_url, jsonBuffer["http_url"]);
+          strcpy(latitude, jsonBuffer["latitude"]);
+          strcpy(longitude, jsonBuffer["longitude"]);
+        } else {
+          Serial.println("Failed to load json config");
+        }
+      }
+    }
+  } else {
+    Serial.println("Failed to mount FS");
+  }
+}
+
+void saveConfig() 
+{
+  Serial.println("Saving config");
+  DynamicJsonDocument jsonBuffer(1024);
+  jsonBuffer["http_url"] = http_url;
+  jsonBuffer["latitude"] = latitude;
+  jsonBuffer["longitude"] = longitude;
+  File configFile = SPIFFS.open("/config.json", "w");
+  if (!configFile) {
+    Serial.println("failed to open config file for writing");
+  }
+  serializeJsonPretty(jsonBuffer, Serial);
+  serializeJson(jsonBuffer, configFile);
+  configFile.close();
+}
+
 void requestData()
 {
   if (WiFi.status() == WL_CONNECTED)
   {
     HTTPClient http;
-    String http_url = "http://porr.rista.fi/weatherlamp.bin";
-    String serverPath = http_url + "?temperature=24.37";
+    http.addHeader("X-Client-Id", macAddr);
+    http.setUserAgent(USER_AGENT);
+    char serverPath[250];
+    strcpy(serverPath, http_url);
+    strcat(serverPath, "?lat=");
+    strcat(serverPath, latitude);
+    strcat(serverPath, "&lon=");
+    strcat(serverPath, longitude);
+    strcat(serverPath, "&client=");
+    strcat(serverPath, macAddr);
+    Serial.println(serverPath);
 
     // Your Domain name with URL path or IP address with path
-    http.begin(serverPath.c_str());
+    http.begin(serverPath);
 
     // Send HTTP GET request
     int httpResponseCode = http.GET();
@@ -130,9 +214,10 @@ void requestData()
       currentPalette = CRGBPalette16();
 
       for (int i = 0; i < 16; i++) {
-        uint8_t i1 = i*3;
-        uint8_t i2 = i*3 + 1;
-        uint8_t i3 = i*3 + 2;
+        uint8_t i1 = i*4;
+        uint8_t i2 = i*4 + 1;
+        uint8_t i3 = i*4 + 2;
+        // uint8_t wind = i*4 + 3;
         uint8_t r = (uint8_t)payload[i1];
         uint8_t g = (uint8_t)payload[i2];
         uint8_t b = (uint8_t)payload[i3];
@@ -170,80 +255,6 @@ void loop()
   runLedEffect();
   FastLED.show();
   FastLED.delay(1000 / UPDATES_PER_SECOND);
-}
-
-/**
-   Mode is switched always when a valid MQTT message is received
-*/
-void switchMode(byte *payload, unsigned int length)
-{
-  colorIndex = 0;
-  // There are several different palettes of colors demonstrated here.
-  //
-  // FastLED provides several 'preset' palettes: RainbowColors_p, RainbowStripeColors_p,
-  // OceanColors_p, CloudColors_p, LavaColors_p, ForestColors_p, and PartyColors_p.
-  switch (payload[2])
-  {
-  case '0':
-    Serial.println("Switch to RainbowColors_p");
-    currentPalette = RainbowColors_p;
-    break;
-  case '1':
-    Serial.println("Switch to RainbowStripeColors_p");
-    currentPalette = RainbowStripeColors_p;
-    break;
-  case '2':
-    Serial.println("Switch to OceanColors_p");
-    currentPalette = OceanColors_p;
-    break;
-  case '3':
-    Serial.println("Switch to CloudColors_p");
-    currentPalette = CloudColors_p;
-    break;
-  case '4':
-    Serial.println("Switch to LavaColors_p");
-    currentPalette = LavaColors_p;
-    break;
-  case '5':
-    Serial.println("Switch to ForestColors_p");
-    currentPalette = ForestColors_p;
-    break;
-  case '6':
-    Serial.println("Switch to PartyColors_p");
-    currentPalette = PartyColors_p;
-    break;
-  default:
-    Serial.print("Invalid palette: ");
-    Serial.println(payload[2]);
-    break;
-  }
-}
-
-/**
-   Mode is switched always when a valid MQTT message is received
-*/
-void setSolidColor(byte *payload, unsigned int length)
-{
-  r = payload[2];
-  g = payload[3];
-  b = payload[4];
-  Serial.println(r);
-  Serial.println(g);
-  Serial.println(b);
-}
-
-void setActiveEffect(byte *payload, unsigned int length)
-{
-  if ((payload[2] >= '0') && (payload[2] <= '2'))
-  {
-    activeEffect = payload[2];
-    Serial.println("activeEffect set");
-  }
-  else
-  {
-    Serial.print("Invalid effect: ");
-    Serial.println(payload[2]);
-  }
 }
 
 void FillLEDsFromPaletteColors(uint8_t colorIndex)
