@@ -1,0 +1,9 @@
+version: "3.8"
+
+services:
+  v1:
+    env_file:
+      - .env
+    command: gunicorn --bind 0.0.0.0:8000 app:app -w 2 -k uvicorn.workers.UvicornWorker
+    ports:
+      - 8002:8000

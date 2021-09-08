@@ -1,6 +1,5 @@
-Flask>2.0,<2.1
 python-dateutil
-sentry-sdk[flask]
+sentry-sdk
 pandas
 requests
 starlette
