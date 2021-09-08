@@ -235,11 +235,19 @@ def create_output(args: argparse.Namespace):
             precipitation = df["precipitation_fore"][i]
         if precipitation >= 3.0:
             color = COLOUR_VERYHEAVYRAIN
+        elif precipitation >= 1.5:
+            color = COLOUR_HEAVYRAIN
         elif precipitation >= 0.5:
             color = COLOUR_LIGHTRAIN
+        elif precipitation > 0.0 and "rain" in df["symbol"][i]:
+            color = COLOUR_LIGHTRAIN
+        elif precipitation == 0.0 and "rain" in df["symbol"][i]:
+            color = COLOUR_CLOUDY
         else:
             color = symbolmap[df["symbol"][i]]
-        # print(df['precipitation_now'][i], df['precipitation_fore'][i], precipitation)
+        logging.debug("{} {} {} {} {}".format(
+            precipitation, df["precipitation_now"][i], df["precipitation_fore"][i], df["symbol"][i], color)
+        )
         colors += color + [0]
     assert len(colors) == 64
     if args.output is not None:
