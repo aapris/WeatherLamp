@@ -24,7 +24,7 @@
 // #define SCL     D1
 
 // Define URL, lat and lon default values here, if there are different values in config.json, they are overwritten.
-char http_url[150] = "http://weatherlamp.rista.net/yrweather.bin";
+char http_url[150] = "http://weatherlamp.rista.net/v1";
 // Helsinki city centre
 char latitude[16] = "60.172";
 char longitude[16] = "24.945";
@@ -48,6 +48,8 @@ WiFiManager wifiManager;
 String mac_str;
 byte mac[6];
 char macAddr[13];
+char builddate[25];
+char serverPath[250];
 unsigned long lastPing = 0;
 
 //flag for saving data
@@ -65,6 +67,21 @@ void requestData2();
 void runLedEffect();
 void setupSpiffs();
 void saveConfig();
+
+void set_vars()
+{
+    strcpy(builddate, __DATE__);
+    strcat(builddate, " ");
+    strcat(builddate, __TIME__);
+
+    strcpy(serverPath, http_url);
+    strcat(serverPath, "?lat=");
+    strcat(serverPath, latitude);
+    strcat(serverPath, "&lon=");
+    strcat(serverPath, longitude);
+    strcat(serverPath, "&client=");
+    strcat(serverPath, macAddr);
+}
 
 
 void setup()
@@ -110,6 +127,7 @@ void setup()
     saveConfig();
     shouldSaveConfig = false;
   }
+  set_vars();
 
   Serial.println("Init FastLED");
 #ifdef CLKPIN
@@ -185,15 +203,8 @@ void requestData()
   {
     HTTPClient http;
     http.addHeader("X-Client-Id", macAddr);
+    http.addHeader("X-Build-Date", builddate);
     http.setUserAgent(USER_AGENT);
-    char serverPath[250];
-    strcpy(serverPath, http_url);
-    strcat(serverPath, "?lat=");
-    strcat(serverPath, latitude);
-    strcat(serverPath, "&lon=");
-    strcat(serverPath, longitude);
-    strcat(serverPath, "&client=");
-    strcat(serverPath, macAddr);
     Serial.println(serverPath);
 
     // Your Domain name with URL path or IP address with path
