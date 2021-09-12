@@ -29,17 +29,19 @@ dictConfig(
 )
 
 
-def validate_args(request: Request) -> Tuple[float, float, str]:
+def validate_args(request: Request) -> Tuple[float, float, str, str]:
     """
     Validate query parameters.
+
     :param request: starlette.requests.Request
     :return: lat, lon and response format
     """
     response_format = request.query_params.get("format", "bin")
+    colormap = request.query_params.get("colormap", "plywood")
     try:
         lat = float(request.query_params.get("lat"))
         lon = float(request.query_params.get("lon"))
-        return lat, lon, response_format
+        return lat, lon, colormap, response_format
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid lat/lon values")
 
@@ -49,11 +51,11 @@ async def v1(request: Request) -> Response:
     Get rain forecast from YR API and return html, json or binary response.
 
     :param request: starlette.requests.Request
-    :return:
+    :return: Response
     """
-    lat, lon, response_format = validate_args(request)
+    lat, lon, colormap, response_format = validate_args(request)
     logging.debug(f"Requested {lat} {lon} {response_format}")
-    x = await yranalyzer.create_output(lat, lon, format=response_format)
+    x = await yranalyzer.create_output(lat, lon, colormap_name=colormap, _format=response_format)
     if response_format == "html":  # for debugging purposes
         return HTMLResponse(x)
     elif response_format == "json":  # if you want to use the data in external app
@@ -66,4 +68,6 @@ routes = [
     Route("/v1", endpoint=v1, methods=["GET", "POST", "HEAD"]),
 ]
 
-app = Starlette(routes=routes)
+debug = True if os.getenv("DEBUG") else False
+
+app = Starlette(debug=debug, routes=routes)

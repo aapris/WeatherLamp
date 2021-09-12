@@ -31,6 +31,8 @@ async def check_cache(
         lat: float, lon: float, cast_type: str = "locationforecast"
 ) -> Tuple[pathlib.Path, Optional[dict]]:
     """
+    Read YR data from a file if it exists for requested lat and lon and it is not more than 5 minutes old.
+
     :param lat: float latitude
     :param lon: float longitude
     :param cast_type: one of "nowcast" or "locationforecast"

@@ -3,13 +3,11 @@ import datetime
 import json
 import logging
 import time
+from typing import Union
 
 import pandas as pd
 import pytz
 from dateutil.parser import parse
-
-import sys
-import os
 
 # PACKAGE_PARENT = '..'
 # SCRIPT_DIR = os.path.dirname(os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(__file__))))
@@ -18,39 +16,52 @@ import os
 import yrapiclient
 
 # TODO: these should be in some configuration file
-# COLOR_CLEARSKY_NIGHT = [5, 18, 151]
-COLORS = {
+
+COLORMAPS = {}
+COLORMAPS["plywood"] = {
     "CLEARSKY_DAY": [20, 108, 214],
     "PARTLYCLOUDY": [40, 158, 154],
     "CLOUDY": [70, 200, 140],
+    "LIGHTRAIN_LT50": [110, 180, 1],
     "LIGHTRAIN": [90, 200, 1],
-    "LIGHTRAIN_GT50": [110, 180, 1],
     "RAIN": [202, 252, 1],
     "HEAVYRAIN": [173, 133, 2],
     "VERYHEAVYRAIN": [143, 93, 2],
 }
 
+COLORMAPS["web"] = {
+    "CLEARSKY_DAY": [135, 206, 235],
+    "PARTLYCLOUDY": [135, 176, 205],
+    "CLOUDY": [200, 200, 200],
+    "LIGHTRAIN_LT50": [161, 228, 74],
+    "LIGHTRAIN": [240, 240, 82],
+    "RAIN": [241, 155, 74],
+    "HEAVYRAIN": [236, 94, 72],
+    "VERYHEAVYRAIN": [234, 127, 248],
+}
+
 # A dict to map weather symbol to particular RGB color
+
 symbolmap = {
     **dict.fromkeys(
         [
             "clearsky",
             "fair",
         ],
-        COLORS["CLEARSKY_DAY"],
+        "CLEARSKY_DAY",
     ),
     **dict.fromkeys(
         [
             "partlycloudy",
         ],
-        COLORS["PARTLYCLOUDY"],
+        "PARTLYCLOUDY",
     ),
     **dict.fromkeys(
         [
             "cloudy",
             "fog",
         ],
-        COLORS["CLOUDY"],
+        "CLOUDY",
     ),
     **dict.fromkeys(
         [
@@ -67,7 +78,7 @@ symbolmap = {
             "heavysnowshowers",
             "heavysnowshowersandthunder",
         ],
-        COLORS["HEAVYRAIN"],
+        "HEAVYRAIN",
     ),
     **dict.fromkeys(
         [
@@ -84,7 +95,7 @@ symbolmap = {
             "lightssleetshowersandthunder",
             "lightssnowshowersandthunder",
         ],
-        COLORS["LIGHTRAIN"],
+        "LIGHTRAIN",
     ),
     **dict.fromkeys(
         [
@@ -101,12 +112,16 @@ symbolmap = {
             "snowshowers",
             "snowshowersandthunder",
         ],
-        COLORS["RAIN"],
+        "RAIN",
     ),
 }
 
 
 def parse_args() -> argparse.Namespace:
+    """
+    Parse command line arguments and set up logging level
+    :return: parsed args
+    """
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument(
         "--log",
@@ -131,6 +146,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def add_to_dict(dict_: dict, key: str, val: float):
+    """
+    Helper function to add key/value pairs to a dict, where value is a list of floats.
+
+    :param dict_: target dict
+    :param key: key name
+    :param val: value
+    """
     if key not in dict_:
         dict_[key] = []
     dict_[key].append(val)
@@ -162,26 +184,35 @@ def yr_precipitation_to_df(yrdata, cast):
             add_to_dict(pers, "variant", variant)
             # Wind and other forecasts
             did = t["data"]["instant"]["details"]
-            # print(json.dumps(did, indent=2))
             add_to_dict(pers, "wind_speed", did["wind_speed"])
 
         timestamps.append(parse(t["time"]))
     df = pd.DataFrame(pers, index=timestamps)
-    # print(df)
     df.index.name = "time"
-    dfr = df.resample("30min").max().fillna(method="pad")
+    if cast == "now":  # nowcast has only precipitation rate
+        dfr = df.resample("30min").agg(['min', 'max', 'mean']).fillna(method="pad")
+        # Remove prec_now level from column title and keep only one [min, max, mean]
+        dfr.columns = dfr.columns.droplevel(0)
+        dfr["prec_now"] = dfr["max"]  # Use max value for precipitation
+    else:  # cast == "fore":  # forecast has more data available
+        dfr = df.resample("30min").max().fillna(method="pad")
     now = datetime.datetime.now(tz=pytz.UTC)
     this_halfhour = now.replace(minute=0, second=0, microsecond=0)
     if (now - this_halfhour).total_seconds() > 30 * 60:
         this_halfhour += datetime.timedelta(minutes=30)
     last_halfhour = this_halfhour + datetime.timedelta(hours=8)
-    # print(this_halfhour, last_halfhour)
     df_filtered: pd.DataFrame = dfr[(dfr.index >= this_halfhour) & (dfr.index < last_halfhour)]
-    # print(df_filtered)
     return df_filtered
 
 
 async def create_combined_forecast(lat: float, lon: float) -> pd.DataFrame:
+    """
+    Request YR nowcast and forecast from cache or API and create single DataFrame from the data.
+
+    :param lat: latitude
+    :param lon: longitude
+    :return: DataFrame with precipitation forecast for next 16 of 30 minute slots
+    """
     nowcast = await yrapiclient.get_nowcast(lat, lon)
     df_now = yr_precipitation_to_df(nowcast, "now")
 
@@ -194,51 +225,99 @@ async def create_combined_forecast(lat: float, lon: float) -> pd.DataFrame:
     return merge
 
 
-async def create_output(lat: float, lon: float, format="bin", output=None):
+async def create_output(
+        lat: float, lon: float, _format: str = "bin", colormap_name: str = "plywood", output=None) -> Union[
+    str, bytearray]:
+    """
+    Create output in requested format.
+
+    :param lat: latitude
+    :param lon: longitude
+    :param _format: output format [html, json or bin]
+    :param output: optional output file
+    :return: precipitation data in requested format
+    """
     df = await create_combined_forecast(lat, lon)
     colors = []
     times = []
+    if colormap_name in COLORMAPS:
+        colormap = COLORMAPS[colormap_name]
+    else:
+        colormap = COLORMAPS[list(COLORMAPS.keys())[0]]
     for i in df.index:
         # Take always nowcast's precipitation, it should be the most accurate
         if pd.notnull(df["prec_now"][i]):
             precipitation = df["prec_now"][i]
+            nowcast = True
         else:
             precipitation = df["prec_fore"][i]
-        key = ""
-        if precipitation >= 3.0:
-            key = "VERYHEAVYRAIN"
-            color = COLORS[key]
-        elif precipitation >= 1.5:
-            key = "HEAVYRAIN"
-            color = COLORS[key]
-        elif precipitation >= 0.5:
-            key = "LIGHTRAIN"
-            color = COLORS[key]
-        elif precipitation > 0.0 and "rain" in df["symbol"][i]:
-            key = "LIGHTRAIN"
-            color = COLORS[key]
-        elif precipitation == 0.0 and "rain" in df["symbol"][i]:
-            key = "CLOUDY"
-            color = COLORS[key]
+            nowcast = False
+        prob_of_prec = df["prob_of_prec"][i]
+        if nowcast:
+            if precipitation >= 3.0:
+                colors_key = "VERYHEAVYRAIN"
+                color = colormap[colors_key]
+            elif precipitation >= 1.5:
+                colors_key = "HEAVYRAIN"
+                color = colormap[colors_key]
+            elif precipitation >= 0.5:
+                colors_key = "RAIN"
+                color = colormap[colors_key]
+            elif precipitation > 0.0:
+                colors_key = "LIGHTRAIN"
+                color = colormap[colors_key]
+            elif precipitation == 0.0 and "rain" in df["symbol"][i]:
+                colors_key = "CLOUDY"
+                color = colormap[colors_key]
+            else:
+                colors_key = symbolmap[df["symbol"][i]]
+                color = colormap[colors_key]
         else:
-            color = symbolmap[df["symbol"][i]]
-        logging.debug("{} {} {} {} {}".format(
-            precipitation, df["prec_now"][i], df["prec_fore"][i], df["symbol"][i], color)
+            symbol = df["symbol"][i]
+            colors_key = symbolmap[symbol]
+            if colors_key == "LIGHTRAIN":
+                if prob_of_prec <= 50:
+                    colors_key = "LIGHTRAIN_LT50"
+            color = colormap[colors_key]
+        logging.debug("{} {} {} {} {} {} {}".format(
+            precipitation, df["prec_now"][i], df["prec_fore"][i], prob_of_prec, df["symbol"][i], colors_key, color)
         )
         colors += color + [0]  # Empty slot for future wind speed
-        times.append([str(i), key, df["symbol"][i], color])
+        times.append({
+            "time": str(i),
+            "color_key": colors_key,
+            "yr_symbol": df["symbol"][i],
+            "prec_nowcast": df["prec_now"][i],
+            "prec_forecast": df["prec_fore"][i],
+            "prob_of_prec": prob_of_prec,
+            "rgb": color
+        })
     assert len(colors) == 64
     arr = bytearray(colors)
     if output is not None:
         with open(output, "wb") as f:
             f.write(arr)
-    if format == "json":
+    if _format == "json":
         return json.dumps(times, indent=2)
-    elif format == "html":
+    elif _format == "html":
         html = ["<html><head></head><body><table>\n"]
+        html.append("""<tr>
+        <td>time</td>
+        <td>yr_symbol</td>
+        <td>color_key</td>
+        <td>prec</td>
+        <td></td>
+        </tr>""")
         for t in times:
-            color = "rgb({})".format(",".join([str(x) for x in t[3]]))
-            html.append(f"<tr><td style='background-color: {color}'>{t[0]} {t[1]} {t[2]}</td></tr>")
+            print(t)
+            t["formatted_color"] = "rgb({})".format(",".join([str(x) for x in t["rgb"]]))
+            html.append("""<tr style='background-color: {formatted_color}'>
+            <td>{time}</td>
+            <td>{yr_symbol}</td>
+            <td>{color_key}</td>
+            <td>{prec_nowcast}/{prec_forecast}</td>
+            <td></td>
+            </tr>""".format(**t))
         html.append("</table></html>")
         return "\n".join(html)
     else:  # format == "bin":
