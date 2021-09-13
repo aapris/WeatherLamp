@@ -8,3 +8,8 @@ services:
     restart: always
     volumes:
       - ./endpoint:/home/app
+    logging:
+      driver: "json-file"
+      options:
+        max-file: 10
+        max-size: 20m
