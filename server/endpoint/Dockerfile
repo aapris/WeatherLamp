@@ -46,8 +46,8 @@ EXPOSE 8000/tcp
 FROM appbase as production
 # ==============================
 
-COPY --chown=app:app requirements-prod.txt $HOME/requirements-prod.txt
-RUN pip install --no-cache-dir -r /app/requirements-prod.txt
+COPY requirements-prod.txt $HOME/requirements-prod.txt
+RUN pip install --no-cache-dir -r $HOME/requirements-prod.txt
 
 COPY --chown=app:app . $HOME/
 
