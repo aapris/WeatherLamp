@@ -4,6 +4,9 @@ services:
   v1:
     env_file:
       - .env
+    build:
+      context: ./endpoint
+      target: production
     command: gunicorn --bind 0.0.0.0:8000 app:app -w 2 -k uvicorn.workers.UvicornWorker
     ports:
       - 8002:8000
