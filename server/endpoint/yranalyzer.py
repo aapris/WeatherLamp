@@ -158,7 +158,30 @@ def add_to_dict(dict_: dict, key: str, val: float):
     dict_[key].append(val)
 
 
-def yr_precipitation_to_df(yrdata, cast):
+def get_start_and_end(slot_len: int, slot_count: int, now=None):
+    """
+    Calculate start and end times for given time slot length, slot count and timestamp.
+    E.g. 15, 16, 2021-09-14 14:55:52 returns
+    2021-09-14 14:45:00 2021-09-14 18:45:00
+
+    :param slot_len:
+    :param slot_count:
+    :param now:
+    :return:
+    """
+    if now is None:
+        now = pytz.utc.localize(datetime.datetime.utcnow())
+    start_time = now.replace(minute=0, second=0, microsecond=0)
+    minutes_over = (now - start_time).total_seconds() / 60
+    if minutes_over > slot_len:
+        multiplier = minutes_over // slot_len
+        start_time += datetime.timedelta(minutes=slot_len * multiplier)
+
+    end_time = start_time + datetime.timedelta(minutes=slot_len * slot_count)
+    return start_time, end_time
+
+
+def yr_precipitation_to_df(yrdata: dict, cast: str, slot_minutes: int, slot_count: int) -> pd.DataFrame:
     timeseries = yrdata["properties"]["timeseries"]
     timestamps = []
     pers = {}
@@ -189,55 +212,60 @@ def yr_precipitation_to_df(yrdata, cast):
         timestamps.append(parse(t["time"]))
     df = pd.DataFrame(pers, index=timestamps)
     df.index.name = "time"
+    res_min = f"{slot_minutes}min"
     if cast == "now":  # nowcast has only precipitation rate
-        dfr = df.resample("30min").agg(['min', 'max', 'mean']).fillna(method="pad")
+        dfr = df.resample(res_min).agg(['min', 'max', 'mean']).fillna(method="pad")
         # Remove prec_now level from column title and keep only one [min, max, mean]
         dfr.columns = dfr.columns.droplevel(0)
         dfr["prec_now"] = dfr["max"]  # Use max value for precipitation
     else:  # cast == "fore":  # forecast has more data available
-        dfr = df.resample("30min").max().fillna(method="pad")
-    now = datetime.datetime.now(tz=pytz.UTC)
-    this_halfhour = now.replace(minute=0, second=0, microsecond=0)
-    if (now - this_halfhour).total_seconds() > 30 * 60:
-        this_halfhour += datetime.timedelta(minutes=30)
-    last_halfhour = this_halfhour + datetime.timedelta(hours=8)
-    df_filtered: pd.DataFrame = dfr[(dfr.index >= this_halfhour) & (dfr.index < last_halfhour)]
+        dfr = df.resample(res_min).max().fillna(method="pad")
+    # Filter out just requested number of data rows
+    starttime, endttime = get_start_and_end(slot_minutes, slot_count)
+    df_filtered: pd.DataFrame = dfr[(dfr.index >= starttime) & (dfr.index < endttime)]
     return df_filtered
 
 
-async def create_combined_forecast(lat: float, lon: float) -> pd.DataFrame:
+async def create_combined_forecast(lat: float, lon: float, slot_minutes: int, slot_count: int) -> pd.DataFrame:
     """
     Request YR nowcast and forecast from cache or API and create single DataFrame from the data.
 
     :param lat: latitude
     :param lon: longitude
-    :return: DataFrame with precipitation forecast for next 16 of 30 minute slots
+    :return: DataFrame with precipitation forecast for next slot_count of slot_minutes 16
     """
     nowcast = await yrapiclient.get_nowcast(lat, lon)
-    df_now = yr_precipitation_to_df(nowcast, "now")
+    df_now = yr_precipitation_to_df(nowcast, "now", slot_minutes, slot_count)
 
     forecast = await yrapiclient.get_locationforecast(lat, lon)
-    df_fore = yr_precipitation_to_df(forecast, "fore")
+    df_fore = yr_precipitation_to_df(forecast, "fore", slot_minutes, slot_count)
 
     merge = pd.concat([df_now, df_fore], axis=1)
     print(merge)
-    assert len(merge.index) == 16
+
+    # TODO: append missing rows instead of raising exception
+    assert len(merge.index) == slot_count
     return merge
 
 
 async def create_output(
-        lat: float, lon: float, _format: str = "bin", colormap_name: str = "plywood", output=None) -> Union[
-    str, bytearray]:
+        lat: float, lon: float, _format: str = "bin",
+        slot_minutes: int = 30, slot_count: int = 16,
+        colormap_name: str = "plywood",
+        output=None) -> Union[str, bytearray]:
     """
     Create output in requested format.
 
     :param lat: latitude
     :param lon: longitude
+    :param slot_minutes: minutes for pandas resample function
+    :param slot_count: how many slot_count will be returned
+    :param colormap_name: pre-defined color map [plywood or web]
     :param _format: output format [html, json or bin]
     :param output: optional output file
     :return: precipitation data in requested format
     """
-    df = await create_combined_forecast(lat, lon)
+    df = await create_combined_forecast(lat, lon, slot_minutes, slot_count)
     colors = []
     times = []
     if colormap_name in COLORMAPS:
@@ -292,7 +320,7 @@ async def create_output(
             "prob_of_prec": prob_of_prec,
             "rgb": color
         })
-    assert len(colors) == 64
+    assert len(colors) == slot_count * 4
     arr = bytearray(colors)
     if output is not None:
         with open(output, "wb") as f:
@@ -309,7 +337,6 @@ async def create_output(
         <td></td>
         </tr>""")
         for t in times:
-            print(t)
             t["formatted_color"] = "rgb({})".format(",".join([str(x) for x in t["rgb"]]))
             html.append("""<tr style='background-color: {formatted_color}'>
             <td>{time}</td>
