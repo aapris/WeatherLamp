@@ -37,7 +37,7 @@ def validate_args(request: Request) -> Tuple[float, float, int, int, str, str]:
     :return: lat, lon and response format
     """
     response_format = request.query_params.get("format", "bin")
-    colormap = request.query_params.get("colormap", "plywood")
+    colormap = request.query_params.get("colormap", "plain")
     try:
         lat = float(request.query_params.get("lat"))
         lon = float(request.query_params.get("lon"))

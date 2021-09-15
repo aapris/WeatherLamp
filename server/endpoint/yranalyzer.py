@@ -3,6 +3,7 @@ import datetime
 import json
 import logging
 import time
+from collections import OrderedDict
 from typing import Union
 
 import pandas as pd
@@ -17,7 +18,19 @@ import yrapiclient
 
 # TODO: these should be in some configuration file
 
-COLORMAPS = {}
+COLORMAPS = OrderedDict()
+
+COLORMAPS["plain"] = {
+    "CLEARSKY_DAY": [135, 206, 235],
+    "PARTLYCLOUDY": [135, 176, 205],
+    "CLOUDY": [200, 200, 200],
+    "LIGHTRAIN_LT50": [161, 228, 74],
+    "LIGHTRAIN": [240, 240, 82],
+    "RAIN": [241, 155, 74],
+    "HEAVYRAIN": [236, 94, 72],
+    "VERYHEAVYRAIN": [234, 127, 248],
+}
+
 COLORMAPS["plywood"] = {
     "CLEARSKY_DAY": [20, 108, 214],
     "PARTLYCLOUDY": [40, 158, 154],
@@ -29,16 +42,6 @@ COLORMAPS["plywood"] = {
     "VERYHEAVYRAIN": [143, 93, 2],
 }
 
-COLORMAPS["web"] = {
-    "CLEARSKY_DAY": [135, 206, 235],
-    "PARTLYCLOUDY": [135, 176, 205],
-    "CLOUDY": [200, 200, 200],
-    "LIGHTRAIN_LT50": [161, 228, 74],
-    "LIGHTRAIN": [240, 240, 82],
-    "RAIN": [241, 155, 74],
-    "HEAVYRAIN": [236, 94, 72],
-    "VERYHEAVYRAIN": [234, 127, 248],
-}
 
 # A dict to map weather symbol to particular RGB color
 
@@ -251,7 +254,7 @@ async def create_combined_forecast(lat: float, lon: float, slot_minutes: int, sl
 async def create_output(
         lat: float, lon: float, _format: str = "bin",
         slot_minutes: int = 30, slot_count: int = 16,
-        colormap_name: str = "plywood",
+        colormap_name: str = "plain",
         output=None) -> Union[str, bytearray]:
     """
     Create output in requested format.
@@ -260,7 +263,7 @@ async def create_output(
     :param lon: longitude
     :param slot_minutes: minutes for pandas resample function
     :param slot_count: how many slot_count will be returned
-    :param colormap_name: pre-defined color map [plywood or web]
+    :param colormap_name: pre-defined color map [plain or plywood]
     :param _format: output format [html, json or bin]
     :param output: optional output file
     :return: precipitation data in requested format
