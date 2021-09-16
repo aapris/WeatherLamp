@@ -6,5 +6,5 @@ starlette
 httpx
 shapely
 uvicorn
-gunicorn
+astral
 
