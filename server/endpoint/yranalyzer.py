@@ -6,6 +6,8 @@ import time
 from collections import OrderedDict
 from typing import Union
 
+import astral
+import astral.sun
 import pandas as pd
 import pytz
 from dateutil.parser import parse
@@ -21,14 +23,14 @@ import yrapiclient
 COLORMAPS = OrderedDict()
 
 COLORMAPS["plain"] = {
-    "CLEARSKY_DAY": [135, 206, 235],
-    "PARTLYCLOUDY": [135, 176, 205],
-    "CLOUDY": [200, 200, 200],
+    "CLEARSKY_DAY": [3, 3, 235],
+    "PARTLYCLOUDY": [65, 126, 205],
+    "CLOUDY": [180, 200, 200],
     "LIGHTRAIN_LT50": [161, 228, 74],
-    "LIGHTRAIN": [240, 240, 82],
-    "RAIN": [241, 155, 74],
-    "HEAVYRAIN": [236, 94, 72],
-    "VERYHEAVYRAIN": [234, 127, 248],
+    "LIGHTRAIN": [240, 240, 42],
+    "RAIN": [241, 155, 44],
+    "HEAVYRAIN": [236, 94, 42],
+    "VERYHEAVYRAIN": [234, 57, 248],
 }
 
 COLORMAPS["plywood"] = {
@@ -41,7 +43,6 @@ COLORMAPS["plywood"] = {
     "HEAVYRAIN": [173, 133, 2],
     "VERYHEAVYRAIN": [143, 93, 2],
 }
-
 
 # A dict to map weather symbol to particular RGB color
 
@@ -148,7 +149,7 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def add_to_dict(dict_: dict, key: str, val: float):
+def add_to_dict(dict_: dict, key: str, val: Union[float, None]):
     """
     Helper function to add key/value pairs to a dict, where value is a list of floats.
 
@@ -191,7 +192,11 @@ def yr_precipitation_to_df(yrdata: dict, cast: str, slot_minutes: int, slot_coun
     for t in timeseries:
         if cast == "now":  # nowcast has only precipitation rate
             did = t["data"]["instant"]["details"]
-            add_to_dict(pers, f"prec_{cast}", did["precipitation_rate"])
+            if "precipitation_rate" in did:  #  radar data is available
+                add_to_dict(pers, f"prec_{cast}", did["precipitation_rate"])
+            else:
+                logging.warning(f"Precipitation rate (radar data) is not available: {did}")
+                add_to_dict(pers, f"prec_{cast}", None)
         elif cast == "fore":  # forecast has more data available
             if "next_1_hours" not in t["data"]:
                 break
@@ -229,24 +234,44 @@ def yr_precipitation_to_df(yrdata: dict, cast: str, slot_minutes: int, slot_coun
     return df_filtered
 
 
-async def create_combined_forecast(lat: float, lon: float, slot_minutes: int, slot_count: int) -> pd.DataFrame:
+async def create_combined_forecast(lat: float, lon: float, slot_minutes: int, slot_count: int,
+                                   dev: bool = False) -> pd.DataFrame:
     """
     Request YR nowcast and forecast from cache or API and create single DataFrame from the data.
 
     :param lat: latitude
     :param lon: longitude
+    :param slot_minutes:
+    :param slot_count:
+    :param dev: use local sample response data instead of remote API
     :return: DataFrame with precipitation forecast for next slot_count of slot_minutes 16
     """
-    nowcast = await yrapiclient.get_nowcast(lat, lon)
-    df_now = yr_precipitation_to_df(nowcast, "now", slot_minutes, slot_count)
+    nowcast = await yrapiclient.get_nowcast(lat, lon, dev)
+    if nowcast is None:  # create mock nowcast, if it was not found
+        st, et = get_start_and_end(slot_minutes, slot_count)
+        # print(st, et)
+        timestamps = [st + datetime.timedelta(minutes=x * slot_minutes) for x in list(range(0, slot_count))]
+        pers = {}
+        for x in list(range(0, slot_count)):
+            add_to_dict(pers, f"prec_now", None)
+        df_now = pd.DataFrame(pers, index=timestamps)
+        df_now.index.name = "time"
+    else:
+        df_now = yr_precipitation_to_df(nowcast, "now", slot_minutes, slot_count)
 
-    forecast = await yrapiclient.get_locationforecast(lat, lon)
+    forecast = await yrapiclient.get_locationforecast(lat, lon, dev)
     df_fore = yr_precipitation_to_df(forecast, "fore", slot_minutes, slot_count)
 
     merge = pd.concat([df_now, df_fore], axis=1)
+    # Add day/night information to the DataFrame
+    # loc = astral.LocationInfo("", "", "", lat, lon)
+    # for i in range(0, len(merge.index)):
+    #     sun = astral.sun.sun(loc.observer, date=merge.index[i])
+    #     print(sun["sunrise"], sun["sunset"])
     print(merge)
 
     # TODO: append missing rows instead of raising exception
+    print(len(merge.index), slot_count)
     assert len(merge.index) == slot_count
     return merge
 
@@ -255,7 +280,8 @@ async def create_output(
         lat: float, lon: float, _format: str = "bin",
         slot_minutes: int = 30, slot_count: int = 16,
         colormap_name: str = "plain",
-        output=None) -> Union[str, bytearray]:
+        output: str = None,
+        dev: bool = False) -> Union[str, bytearray]:
     """
     Create output in requested format.
 
@@ -266,15 +292,17 @@ async def create_output(
     :param colormap_name: pre-defined color map [plain or plywood]
     :param _format: output format [html, json or bin]
     :param output: optional output file
+    :param dev: use local sample response data instead of remote API
     :return: precipitation data in requested format
     """
-    df = await create_combined_forecast(lat, lon, slot_minutes, slot_count)
+    df = await create_combined_forecast(lat, lon, slot_minutes, slot_count, dev)
     colors = []
     times = []
     if colormap_name in COLORMAPS:
         colormap = COLORMAPS[colormap_name]
     else:
         colormap = COLORMAPS[list(COLORMAPS.keys())[0]]
+    cnt = 0
     for i in df.index:
         # Take always nowcast's precipitation, it should be the most accurate
         if pd.notnull(df["prec_now"][i]):
@@ -310,6 +338,12 @@ async def create_output(
                 if prob_of_prec <= 50:
                     colors_key = "LIGHTRAIN_LT50"
             color = colormap[colors_key]
+        # Temporary kludge to test all color definitions
+        # if True:
+        #     size = slot_count // len(colormap.keys()) + 1
+        #     c_idx = cnt // size
+        #     colorss = list(colormap.values())
+        #     color = colorss[c_idx]
         logging.debug("{} {} {} {} {} {} {}".format(
             precipitation, df["prec_now"][i], df["prec_fore"][i], prob_of_prec, df["symbol"][i], colors_key, color)
         )
@@ -323,6 +357,7 @@ async def create_output(
             "prob_of_prec": prob_of_prec,
             "rgb": color
         })
+        cnt += 1
     assert len(colors) == slot_count * 4
     arr = bytearray(colors)
     if output is not None:
@@ -331,7 +366,19 @@ async def create_output(
     if _format == "json":
         return json.dumps(times, indent=2)
     elif _format == "html":
-        html = ["<html><head></head><body><table>\n"]
+        html = ["""<html><head>
+        <style>
+          body {
+            margin: 0px;
+            padding: 0px;
+          }
+          .container {
+            width: 100%;
+            min-height: 100%;
+            padding: 0px;
+          }
+        </style>
+        </head><body><table class="container">\n"""]
         html.append("""<tr>
         <td>time</td>
         <td>yr_symbol</td>

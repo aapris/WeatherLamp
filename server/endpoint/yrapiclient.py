@@ -5,6 +5,7 @@ import pathlib
 from typing import Optional, Tuple
 
 import httpx
+import pytz as pytz
 from shapely import wkt
 from shapely.geometry import Point
 
@@ -28,7 +29,7 @@ nowcast_coverage_wkt = """POLYGON ((
 
 
 async def check_cache(
-        lat: float, lon: float, cast_type: str = "locationforecast"
+        lat: float, lon: float, cast_type: str = "locationforecast", dev: bool = False
 ) -> Tuple[pathlib.Path, Optional[dict]]:
     """
     Read YR data from a file if it exists for requested lat and lon and it is not more than 5 minutes old.
@@ -36,28 +37,47 @@ async def check_cache(
     :param lat: float latitude
     :param lon: float longitude
     :param cast_type: one of "nowcast" or "locationforecast"
+    :param dev:
     :return: path to cache file and the data if there was cache hit
     """
     yrdata = None
-    cachedir = "cache"
-    pathlib.Path(cachedir).mkdir(parents=True, exist_ok=True)
-    cachefile = pathlib.Path(cachedir).joinpath(pathlib.Path(f"yr-cache-{cast_type}.{lat}_{lon}.json"))
-    if cachefile.exists():
-        mtime = datetime.datetime.fromtimestamp(cachefile.stat().st_mtime)
-        now = datetime.datetime.now()
-        age = (now - mtime).total_seconds()
-        if age > 5 * 60:
-            logging.info(f"Removing {cachefile} which is {age} seconds old.")
-            cachefile.unlink(missing_ok=True)
-    if cachefile.exists():
-        logging.info(f"Using cached data from {cachefile}.")
+
+    if dev:  # In dev mode generate fresh timestamps for sample data
+        now = pytz.utc.localize(datetime.datetime.utcnow())
+        if cast_type == "locationforecast":  # previous full hour (18:47 -> 18:00)
+            delta = 60  # minutes
+            ts = now.replace(minute=0, second=0, microsecond=0)
+        else:  # previous full 5 minutes (18:47 -> 18:45)
+            delta = 5
+            ts = now.replace(minute=now.minute // 5 * 5, second=0, microsecond=0)
+        cachefile = pathlib.Path(".").joinpath(pathlib.Path(f"yr-cache-{cast_type}.dev.json"))
         with open(cachefile, "rt") as f:
             yrdata = json.loads(f.read())
+            for t in yrdata["properties"]["timeseries"]:
+                newtime = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+                ts = ts + datetime.timedelta(minutes=delta)
+                t["time"] = newtime
+    else:
+        cachedir = "cache"
+        pathlib.Path(cachedir).mkdir(parents=True, exist_ok=True)
+        cachefile = pathlib.Path(cachedir).joinpath(pathlib.Path(f"yr-cache-{cast_type}.{lat}_{lon}.json"))
+        if cachefile.exists():
+            mtime = datetime.datetime.fromtimestamp(cachefile.stat().st_mtime)
+            now = datetime.datetime.now()
+            age = (now - mtime).total_seconds()
+            if age > 5 * 60:
+                logging.info(f"Removing {cachefile} which is {age} seconds old.")
+                cachefile.unlink(missing_ok=True)
+        if cachefile.exists():
+            logging.info(f"Using cached data from {cachefile}.")
+            with open(cachefile, "rt") as f:
+                yrdata = json.loads(f.read())
+    # print(json.dumps(yrdata, indent=2))
     return cachefile, yrdata
 
 
-async def get_yrdata(lat: float, lon: float, cast_type: str = "locationforecast"):
-    cachefile, yrdata = await check_cache(lat, lon, cast_type)
+async def get_yrdata(lat: float, lon: float, cast_type: str = "locationforecast", dev: bool = False):
+    cachefile, yrdata = await check_cache(lat, lon, cast_type, dev)
     if yrdata is None:
         parameters = f"lat={lat}&lon={lon}"
         headers = {"User-Agent": USER_AGENT}
@@ -94,20 +114,20 @@ async def get_yrdata(lat: float, lon: float, cast_type: str = "locationforecast"
     return yrdata
 
 
-async def get_locationforecast(lat: float, lon: float) -> Optional[dict]:
+async def get_locationforecast(lat: float, lon: float, dev: bool) -> Optional[dict]:
     yrdata = None
     if -90 < lat < 90 and -180 < lon < 180:
-        yrdata = await get_yrdata(lat, lon, "locationforecast")
+        yrdata = await get_yrdata(lat, lon, "locationforecast", dev)
     else:
         raise ValueError("Values must be '-90 < lat < 90 and -180 < lon < 180'")
     return yrdata
 
 
-async def get_nowcast(lat: float, lon: float) -> Optional[dict]:
+async def get_nowcast(lat: float, lon: float, dev: bool) -> Optional[dict]:
     nowcast_coverage = wkt.loads(nowcast_coverage_wkt)
     yrdata = None
     if nowcast_coverage.contains(Point(lon, lat)):
-        yrdata = await get_yrdata(lat, lon, "nowcast")
+        yrdata = await get_yrdata(lat, lon, "nowcast", dev)
     return yrdata
 
 

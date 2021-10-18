@@ -29,7 +29,7 @@ dictConfig(
 )
 
 
-def validate_args(request: Request) -> Tuple[float, float, int, int, str, str]:
+def validate_args(request: Request) -> Tuple[float, float, int, int, str, str, bool]:
     """
     Validate query parameters.
 
@@ -38,6 +38,7 @@ def validate_args(request: Request) -> Tuple[float, float, int, int, str, str]:
     """
     response_format = request.query_params.get("format", "bin")
     colormap = request.query_params.get("colormap", "plain")
+    dev = True if request.query_params.get("dev") is not None else False
     try:
         lat = float(request.query_params.get("lat"))
         lon = float(request.query_params.get("lon"))
@@ -47,10 +48,10 @@ def validate_args(request: Request) -> Tuple[float, float, int, int, str, str]:
         slot_minutes = int(request.query_params.get("interval", 30))
         slot_count = int(request.query_params.get("slots", 16))
         if slot_minutes / 60 * slot_count > 48:
-            raise HTTPException(status_code=400, detail="Interval*slots > 48 hou")
+            raise HTTPException(status_code=400, detail="Interval*slots > 48 hours")
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid interval/slots values")
-    return lat, lon, slot_minutes, slot_count, colormap, response_format
+    return lat, lon, slot_minutes, slot_count, colormap, response_format, dev
 
 
 async def v1(request: Request) -> Response:
@@ -60,7 +61,7 @@ async def v1(request: Request) -> Response:
     :param request: starlette.requests.Request
     :return: Response
     """
-    lat, lon, slot_minutes, slot_count, colormap, response_format = validate_args(
+    lat, lon, slot_minutes, slot_count, colormap, response_format, dev = validate_args(
         request
     )
     logging.debug(f"Requested {lat} {lon} {response_format}")
@@ -71,6 +72,7 @@ async def v1(request: Request) -> Response:
         slot_count=slot_count,
         colormap_name=colormap,
         _format=response_format,
+        dev=dev,
     )
     if response_format == "html":  # for debugging purposes
         return HTMLResponse(x)
