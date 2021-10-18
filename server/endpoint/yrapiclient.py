@@ -81,6 +81,15 @@ async def get_yrdata(lat: float, lon: float, cast_type: str = "locationforecast"
             cachefile += ".error"
         with open(cachefile, "wt") as f:
             f.write(res.text)
+        # Temporarily write all files to history directory too
+        now = datetime.datetime.utcnow()
+        historydir = pathlib.Path("history") / pathlib.Path(now.strftime("%Y-%m-%d"))
+        pathlib.Path(historydir).mkdir(parents=True, exist_ok=True)
+        ts = now.strftime("%Y%m%dT%H%M%SZ")
+        historyfile = historydir / pathlib.Path(f"yr-{cast_type}-{lat}_{lon}-{ts}.json")
+        if historyfile.exists() is False:
+            with open(historyfile, "wt") as f:
+                f.write(res.text)
         logging.debug(res.headers)
     return yrdata
 
