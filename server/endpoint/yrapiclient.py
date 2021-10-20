@@ -72,7 +72,6 @@ async def check_cache(
             logging.info(f"Using cached data from {cachefile}.")
             with open(cachefile, "rt") as f:
                 yrdata = json.loads(f.read())
-    # print(json.dumps(yrdata, indent=2))
     return cachefile, yrdata
 
 
@@ -115,7 +114,6 @@ async def get_yrdata(lat: float, lon: float, cast_type: str = "locationforecast"
 
 
 async def get_locationforecast(lat: float, lon: float, dev: bool) -> Optional[dict]:
-    yrdata = None
     if -90 < lat < 90 and -180 < lon < 180:
         yrdata = await get_yrdata(lat, lon, "locationforecast", dev)
     else:
@@ -124,6 +122,14 @@ async def get_locationforecast(lat: float, lon: float, dev: bool) -> Optional[di
 
 
 async def get_nowcast(lat: float, lon: float, dev: bool) -> Optional[dict]:
+    """
+    Request nowcast from YR API, if lat & lon are within nowcast's coverage.
+
+    :param lat: latitude
+    :param lon: longitude
+    :param dev: if True use local sample response data instead of remote API
+    :return: response data
+    """
     nowcast_coverage = wkt.loads(nowcast_coverage_wkt)
     yrdata = None
     if nowcast_coverage.contains(Point(lon, lat)):
@@ -132,7 +138,7 @@ async def get_nowcast(lat: float, lon: float, dev: bool) -> Optional[dict]:
 
 
 async def main(lat: float = 60.17, lon: float = 24.95):
-    data = await get_nowcast(lat, lon)
+    data = await get_nowcast(lat, lon, False)
     print(json.dumps(data, indent=2))
 
 
