@@ -35,7 +35,6 @@ char interval[4] = "30";  // minutes
 char slots[5];
 uint8_t slots_i = NUM_LEDS;
 uint8_t led_array[NUM_LEDS*3];
-uint8_t erase_pin = 12; // 13 == D7
 
 // Move to settings, perhaps?
 CRGBPalette16 currentPalette;
@@ -104,15 +103,24 @@ void setup()
   Serial.begin(115200);
   Serial.println();
   Serial.println();
-  pinMode(erase_pin, INPUT); 
+  pinMode(BUTTONPIN, INPUT_PULLUP);
+  pinMode(BUILTIN_LED, OUTPUT);
   delay(500);
-  uint8_t erase_config = digitalRead(erase_pin);
-  Serial.print("Should erase config: ");
-  Serial.println(erase_config);
+  // Check if we are requested to reset settings and force captive portal on
+  if (digitalRead(BUTTONPIN) == 0) {
+    Serial.print("Button pin GPIO ");
+    Serial.print(BUTTONPIN);
+    Serial.print(" was LOW (connected to GND), resetting settings!");
+    digitalWrite(LED_BUILTIN, LOW);  // LOW turns led on
+    wifiManager.resetSettings();
+    delay(5000);
+    digitalWrite(LED_BUILTIN, HIGH);  // HIGH turns led off
+  }
 
   setupSpiffs();
   wifiManager.setSaveConfigCallback(saveConfigCallback);
 
+  // TODO: put WiFiManager stuff into an own function
   WiFiManagerParameter custom_text1("<p>Data URL</p>");
   wifiManager.addParameter(&custom_text1);
   WiFiManagerParameter custom_http_url("http_url", "Data URL", http_url, 150);
@@ -325,9 +333,6 @@ void loop()
   unsigned long now = millis();
   if (lastPing + 10000 < now)
   {
-    uint8_t erase_config = digitalRead(erase_pin);
-    Serial.print("Should erase config: ");
-    Serial.println(erase_config);
     Serial.print("Build date: ");
     Serial.println(builddate);
     requestData();
