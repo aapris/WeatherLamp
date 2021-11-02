@@ -121,7 +121,7 @@ def get_start_and_end(slot_len: int, slot_count: int, now=None):
     return start_time, end_time
 
 
-def yr_precipitation_to_df(yrdata: dict, cast: str, slot_minutes: int, slot_count: int) -> pd.DataFrame:
+def yr_precipitation_to_df(yrdata: dict, cast: str, slot_minutes: int, slot_count: int, now=None) -> pd.DataFrame:
     timeseries = yrdata["properties"]["timeseries"]
     timestamps = []
     pers = {}
@@ -131,7 +131,7 @@ def yr_precipitation_to_df(yrdata: dict, cast: str, slot_minutes: int, slot_coun
             if "precipitation_rate" in did:  # radar data is available
                 add_to_dict(pers, f"prec_{cast}", did["precipitation_rate"])
             else:
-                logging.warning(f"Precipitation rate (radar data) is not available: {did}")
+                logging.warning(f"Precipitation rate (radar data) is not available at {t['time']}: {did}")
                 add_to_dict(pers, f"prec_{cast}", None)
         elif cast == "fore":  # forecast has more data available
             if "next_1_hours" not in t["data"]:
@@ -166,12 +166,13 @@ def yr_precipitation_to_df(yrdata: dict, cast: str, slot_minutes: int, slot_coun
     else:  # cast == "fore":  # forecast has more data available
         dfr = df.resample(res_min).max().fillna(method="pad")
     # Filter out just requested number of data rows
-    starttime, endttime = get_start_and_end(slot_minutes, slot_count)
+    starttime, endttime = get_start_and_end(slot_minutes, slot_count, now)
     df_filtered: pd.DataFrame = dfr[(dfr.index >= starttime) & (dfr.index < endttime)]
     return df_filtered
 
 
-def create_combined_forecast(nowcast: dict, forecast: dict, slot_minutes: int, slot_count: int) -> pd.DataFrame:
+def create_combined_forecast(nowcast: dict, forecast: dict, slot_minutes: int, slot_count: int,
+                             now=None) -> pd.DataFrame:
     """
     Put nowcast and forecast into a Pandas DataFrame and merge the result.
 
@@ -190,9 +191,9 @@ def create_combined_forecast(nowcast: dict, forecast: dict, slot_minutes: int, s
         df_now = pd.DataFrame(pers, index=timestamps)
         df_now.index.name = "time"
     else:
-        df_now = yr_precipitation_to_df(nowcast, "now", slot_minutes, slot_count)
+        df_now = yr_precipitation_to_df(nowcast, "now", slot_minutes, slot_count, now)
 
-    df_fore = yr_precipitation_to_df(forecast, "fore", slot_minutes, slot_count)
+    df_fore = yr_precipitation_to_df(forecast, "fore", slot_minutes, slot_count, now)
     merge = pd.concat([df_now, df_fore], axis=1)
     # TODO: append missing rows instead of raising exception
     assert len(merge.index) == slot_count
