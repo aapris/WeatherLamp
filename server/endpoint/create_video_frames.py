@@ -26,7 +26,8 @@ colormap = {
 
 
 def loop_casts(casts: list) -> dict:
-    """Loop all casts and remove duplicates by putting them into a dict with first timestamp in timeseries list
+    """Loop all casts and remove duplicates by putting them into a dict using
+    the first timestamp as a key in timeseries list
 
     :param casts: list of paths
     :return: dict of casts as dict
@@ -55,7 +56,7 @@ def get_cast_files(directory: Path, lat: str, lon: str) -> Tuple[list, list]:
     entries = []
     # Save only files having lat and lon in the name
     for e in directory.iterdir():
-        if lat in e.stem and lon in e.stem:
+        if str(lat) in e.stem and str(lon) in e.stem:
             entries.append(e)
     entries.sort()
     # Split the list to forecasts and nowcasts
@@ -70,7 +71,7 @@ def get_tb_files(directory: Path) -> List[Path]:
     return entries
 
 
-def create_df(nowcasts_by_start_time, forecasts_by_start_time, ts, lat, lon, colormap):
+def create_df(nowcasts_by_start_time, forecasts_by_start_time, ts, colormap, args):
     now = dateutil.parser.parse(ts)
     tn = find_cast(nowcasts_by_start_time, ts)
     tf = find_cast(forecasts_by_start_time, ts)
@@ -78,9 +79,9 @@ def create_df(nowcasts_by_start_time, forecasts_by_start_time, ts, lat, lon, col
         return None
     nowcast = nowcasts_by_start_time[tn]
     forecast = forecasts_by_start_time[tf]
-    df = yranalyzer.create_combined_forecast(nowcast, forecast, 30, 24, now)
+    df = yranalyzer.create_combined_forecast(nowcast, forecast, args.interval, args.slots, now)
     df = yranalyzer.add_symbol_and_color(df, colormap)
-    df = yranalyzer.add_day_night(df, lat, lon)
+    df = yranalyzer.add_day_night(df, args.lat, args.lon)
     return df
 
 
@@ -149,7 +150,7 @@ def create_tb(tbimages, nowcasts_by_start_time, forecasts_by_start_time, args):
         ts_utc = pytz.utc.localize(datetime.datetime.strptime(tb_image.stem, "%Y%m%d%H%M"))
         ts = ts_utc.astimezone(pytz.timezone("Europe/Helsinki"))
         ts_str = ts_utc.isoformat()
-        df = create_df(nowcasts_by_start_time, forecasts_by_start_time, ts_str, lat, lon, colormap)
+        df = create_df(nowcasts_by_start_time, forecasts_by_start_time, ts_str, colormap, args)
         if df is None:
             logging.warning(f"Couldn't create dataframe at {ts}")
             continue
@@ -169,8 +170,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument('--log', dest='log', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         default='ERROR', help='Set the logging level')
-    parser.add_argument('--lat', required=True, help='Latitude in format d.ddd')
-    parser.add_argument('--lon', required=True, help='Longitude in format d.ddd')
+    parser.add_argument('--lat', required=True, type=float, help='Latitude in format d.ddd')
+    parser.add_argument('--lon', required=True, type=float, help='Longitude in format d.ddd')
+    parser.add_argument('--slots', required=False, type=int, default=24, help='Number of slots in rain array')
+    parser.add_argument('--interval', required=True, type=int, help='Slot length in minutes')
     parser.add_argument('--targetdir', required=True, help='Directory to save new images')
     parser.add_argument('--yrdirs', required=True, nargs='+', help='Directories containing JSON files from YR API')
     parser.add_argument('--tbdirs', required=True, nargs='+',
