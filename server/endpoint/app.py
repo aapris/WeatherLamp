@@ -1,4 +1,5 @@
 import io
+import itertools
 import json
 import logging
 import os
@@ -160,6 +161,14 @@ async def create_output(
         cnt += 1
     assert len(colors) == slot_count * 4
     arr = bytearray(colors)
+    reverse = True  # TODO: add option to use reversed_arr
+    if reverse:
+        # Split list to a chunks of 4
+        split_arr = list([arr[i:i + 4] for i in range(0, len(arr), 4)])
+        # Reverse chunks
+        reversed_split_arr = list(reversed(split_arr))
+        # Join chunks back to 1-dim array
+        arr = bytearray((itertools.chain.from_iterable(reversed_split_arr)))
     if output is not None:
         with open(output, "wb") as f:
             f.write(arr)
