@@ -5,7 +5,7 @@ services:
     build:
       context: ./endpoint
       target: development
-    restart: always
+    restart: unless-stopped
     volumes:
       - ./endpoint:/home/app
     logging:
