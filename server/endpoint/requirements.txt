@@ -71,3 +71,4 @@ urllib3==1.26.6
     #   sentry-sdk
 uvicorn==0.15.0
     # via -r requirements.in
+gunicorn

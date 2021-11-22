@@ -65,7 +65,7 @@ async def check_cache(
             mtime = datetime.datetime.fromtimestamp(cachefile.stat().st_mtime)
             now = datetime.datetime.now()
             age = (now - mtime).total_seconds()
-            if age > 5 * 60:
+            if age > 2 * 60:
                 logging.info(f"Removing {cachefile} which is {age} seconds old.")
                 cachefile.unlink(missing_ok=True)
         if cachefile.exists():
