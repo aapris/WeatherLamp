@@ -1,5 +1,6 @@
 import datetime
 import logging
+import re
 from typing import Union
 
 import astral
@@ -232,6 +233,7 @@ def add_symbol_and_color(df: pd.DataFrame, colormap: dict):
     """
     symbols = []
     colors = []
+    rain_re = re.compile(r"rain|sleet|snow", re.IGNORECASE)
     for i in df.index:
         # Take always nowcast's precipitation, it should be the most accurate
         if pd.notnull(df["prec_now"][i]):
@@ -258,7 +260,7 @@ def add_symbol_and_color(df: pd.DataFrame, colormap: dict):
                 colors_key = "LIGHTRAIN"
                 symbols.append(colors_key)
                 colors.append(colormap[colors_key])
-            elif precipitation == 0.0 and "rain" in df["symbol"][i]:
+            elif precipitation == 0.0 and rain_re.findall(df["symbol"][i]):
                 colors_key = "CLOUDY"
                 symbols.append(colors_key)
                 colors.append(colormap[colors_key])
