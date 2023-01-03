@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 
 import httpx
 import pytz as pytz
+from httpx import RequestError
 from shapely import wkt
 from shapely.geometry import Point
 
@@ -84,7 +85,10 @@ async def get_yrdata(lat: float, lon: float, cast_type: str = "locationforecast"
         full_url = f"{url}?{parameters}"
         logging.info(f"Requesting data from {full_url}")
         async with httpx.AsyncClient() as client:
-            res = await client.get(full_url, headers=headers)
+            try:
+                res = await client.get(full_url, headers=headers)
+            except RequestError as err:
+                logging.critical(str(err))
         if res.status_code == 200:
             logging.info(f"Got 200 OK")
         elif res.status_code == 203:
