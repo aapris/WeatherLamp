@@ -11,7 +11,7 @@ import pandas as pd
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, Response, StreamingResponse
+from starlette.responses import HTMLResponse, Response, StreamingResponse, FileResponse
 from starlette.routing import Route
 
 import yranalyzer
@@ -77,7 +77,7 @@ def validate_args(request: Request) -> Tuple[float, float, int, int, str, str, b
             slot_minutes = 15
         elif buttoncount == 2:
             slot_minutes = 5
-        else:
+        else:  # must be 3
             slot_minutes = 60  # spot price
         slot_count = int(request.query_params.get("slots", 16))
         if slot_minutes / 60 * slot_count > 48:
@@ -111,7 +111,7 @@ async def create_forecast(
 async def create_output(
         lat: float,
         lon: float,
-        _format: str = "bin",
+        format_: str = "bin",
         slot_minutes: int = 30,
         slot_count: int = 16,
         colormap_name: str = "plain",
@@ -126,7 +126,7 @@ async def create_output(
     :param slot_minutes: minutes for pandas resample function
     :param slot_count: how many slot_count will be returned
     :param colormap_name: pre-defined color map [plain or plywood]
-    :param _format: output format [html, json or bin]
+    :param format_: output format [html, json or bin]
     :param output: optional output file
     :param dev: use local sample response data instead of remote API
     :return: precipitation data in requested format
@@ -188,9 +188,9 @@ async def create_output(
     if output is not None:
         with open(output, "wb") as f:
             f.write(arr)
-    if _format == "json":
+    if format_ == "json":
         return json.dumps(times, indent=2)
-    elif _format == "html":
+    elif format_ == "html":
         html = [
             """<html><head>
         <style>
@@ -239,6 +239,11 @@ async def v1(request: Request) -> Response:
     :param request: starlette.requests.Request
     :return: Response
     """
+    # Temporary kludge to return spot price from file
+    mode = int(request.query_params.get("buttoncount", 0)) % 4
+    if mode == 3:
+        logging.info("Requested spot price")
+        return FileResponse(str(os.getenv("SAHKO_PATH")), media_type="application/octet-stream")
     lat, lon, slot_minutes, slot_count, colormap, response_format, dev = validate_args(request)
     logging.debug(f"Requested {lat} {lon} {response_format}")
     x = await create_output(
@@ -247,7 +252,7 @@ async def v1(request: Request) -> Response:
         slot_minutes=slot_minutes,
         slot_count=slot_count,
         colormap_name=colormap,
-        _format=response_format,
+        format_=response_format,
         dev=dev,
     )
     if response_format == "html":  # for debugging purposes
