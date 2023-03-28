@@ -8,6 +8,8 @@
 TODO:
 -
 */
+// This reduces / removes slight flickering in some cases (e.g. 3 pin WS2812B, 36 LEDS)
+#define FASTLED_ALLOW_INTERRUPTS 0
 
 #include <FS.h>       // this needs to be first, or it all crashes and burns...
 #include "settings.h" // Remember to copy settings-example.h to settings.h and check all the values!
@@ -19,8 +21,7 @@ TODO:
 #ifndef FastLED
 #include <FastLED.h>
 #endif
-
-#define FASTLED_ALLOW_INTERRUPTS 0
+#include <RTCMemory.h>
 
 // I2C settings
 // #define SDA     D2
@@ -36,6 +37,8 @@ char extra[129] = "";
 char interval[4] = "30"; // minutes
 char slots[5];
 char buttoncount[10];
+char rebootcount[10];
+char uptimeSec[10];
 uint8_t slots_i = NUM_LEDS;
 uint8_t led_array[NUM_LEDS * 3];
 
@@ -64,6 +67,9 @@ unsigned long lastPing = 0;
 // Flag for saving data
 bool shouldSaveConfig = false;
 
+uint8_t setupState = 0;
+uint8_t updateIntervalSec = 30;
+
 // Button state
 uint8_t buttonUp = HIGH;
 uint8_t buttonPressed = LOW;
@@ -73,6 +79,18 @@ uint8_t buttonState = buttonUp;
 uint8_t buttonLastState = buttonUp;
 uint8_t buttonPressType = 0;    // 0 = not pressed, 1 = short press, 2 = long press
 uint8_t buttonPressWaiting = 0; // reset this after button press is handled
+
+// Define a struct that maps what's inside the RTC memory
+// for storing button press and reboot count
+// Max size is 508 bytes.
+typedef struct
+{
+  uint32_t buttonPressCount;
+  uint32_t rebootCount;
+} MyCounters;
+
+RTCMemory<MyCounters> rtcMemory;
+MyCounters *data;
 
 // Callback notifying us of the need to save config
 void saveConfigCallback()
@@ -92,7 +110,10 @@ void set_vars()
 {
   // Hard coded slots for now (before implementing scaling from slots to NUM_LEDS)
   itoa(NUM_LEDS, slots, 10);
-  itoa(buttonCounter, buttoncount, 10);
+  itoa(data->buttonPressCount, buttoncount, 10);
+  itoa(data->rebootCount, rebootcount, 10);
+  // itoa(buttonCounter, buttoncount, 10);
+  ltoa(millis() / 1000, uptimeSec, 10);
 
   strcpy(builddate, __DATE__);
   strcat(builddate, " ");
@@ -113,6 +134,10 @@ void set_vars()
   strcat(serverPath, macAddr);
   strcat(serverPath, "&buttoncount=");
   strcat(serverPath, buttoncount);
+  strcat(serverPath, "&reboots=");
+  strcat(serverPath, rebootcount);
+  strcat(serverPath, "&uptime=");
+  strcat(serverPath, uptimeSec);
   strcat(serverPath, "&extra=");
   strcat(serverPath, extra);
   slots_i = atoi(slots);
@@ -120,6 +145,7 @@ void set_vars()
 
 void setup()
 {
+  setupState = 1;
   Serial.begin(115200);
   Serial.println();
   Serial.println();
@@ -140,6 +166,7 @@ void setup()
   currentBlending = LINEARBLEND;
   runLedEffect();
   FastLED.show();
+  delay(500);
 
   // Check if we are requested to reset settings and force captive portal on
   buttonLastState = digitalRead(BUTTONPIN);
@@ -150,7 +177,6 @@ void setup()
     Serial.print(" was LOW (connected to GND), resetting settings!");
     digitalWrite(LED_BUILTIN, LOW); // LOW turns led on
     wifiManager.resetSettings();
-    delay(5000);
     digitalWrite(LED_BUILTIN, HIGH); // HIGH turns led off
   }
 
@@ -204,7 +230,32 @@ void setup()
   sprintf(ap_name, "%s_%s", AP_NAME, macAddr);
   Serial.print("AP name would be: ");
   Serial.println(ap_name);
+  setupState = 2;
+  runLedEffect();
+  FastLED.show();
   wifiManager.autoConnect(ap_name);
+  setupState = 3;
+  runLedEffect();
+  FastLED.show();
+
+  // Set up RTC memory
+  if (rtcMemory.begin())
+  {
+    Serial.println("Initialization done! Previous data found.");
+  }
+  else
+  {
+    Serial.println("Initialization done! No previous data found. The buffer is cleared.");
+    // Initialize data structure
+  }
+  // MyCounters *data = rtcMemory.getData();
+  data = rtcMemory.getData();
+  Serial.print("Button press count: ");
+  Serial.println(data->buttonPressCount);
+  data->rebootCount++;
+  Serial.print("Reboot count: ");
+  Serial.println(data->rebootCount);
+  rtcMemory.save();
 
   // Wire.begin(SDA, SCL);
   // read updated parameters
@@ -232,6 +283,7 @@ void setup()
     shouldSaveConfig = false;
   }
   set_vars();
+  setupState = 0;
 }
 
 void setupSpiffs()
@@ -310,6 +362,7 @@ void requestData()
 {
   if (WiFi.status() == WL_CONNECTED)
   {
+    set_vars();
     HTTPClient http;
     http.addHeader("X-Client-Id", macAddr);
     http.addHeader("X-Build-Date", builddate);
@@ -415,15 +468,21 @@ void checkButton()
   {
     if (buttonPressType == 1)
     {
+      // TODO: use only one counter
       buttonCounter++;
+      data->buttonPressCount++;
+      rtcMemory.save();
     }
     else if (buttonPressType == 2)
     {
       buttonCounter = 0;
+      data->buttonPressCount = 0;
+      rtcMemory.save();
     }
     set_vars();
     buttonPressWaiting = 0;
     buttonPressType = 0;
+    lastPing = 0; // trigger update data from server
   }
 }
 
@@ -431,7 +490,7 @@ void loop()
 {
   checkButton();
   unsigned long now = millis();
-  if (lastPing + 10000 < now)
+  if ((lastPing + updateIntervalSec * 1000 < now) || (lastPing == 0))
   {
     Serial.print("Build date: ");
     Serial.println(builddate);
@@ -450,6 +509,36 @@ void FillLEDsFromPaletteColors(uint8_t colorIndex)
   {
     leds[i] = ColorFromPalette(currentPalette, colorIndex, brightness, currentBlending);
     colorIndex += (int)255 / NUM_LEDS;
+  }
+}
+
+void FillLEDsWithSetupColor()
+{
+  uint8_t r = 100;
+  uint8_t g = 100;
+  uint8_t b = 100;
+  if (setupState == 1)
+  {
+    r = 0;
+    g = 127;
+    b = 127;
+  }
+  else if (setupState == 2)
+  {
+    r = 127;
+    g = 127;
+    b = 0;
+  }
+  else if (setupState == 3)
+  {
+    r = 0;
+    g = 127;
+    b = 0;
+  }
+
+  for (uint8_t i = 0; i < NUM_LEDS; i++)
+  {
+    leds[i].setRGB(r, g, b);
   }
 }
 
@@ -477,7 +566,11 @@ void FillLEDsWithWeatherColor()
 
 void runLedEffect()
 {
-  if (buttonPressType == 0)
+  if (setupState)
+  {
+    FillLEDsWithSetupColor();
+  }
+  else if (buttonPressType == 0)
   {
     FillLEDsWithWeatherColor();
   }
