@@ -149,7 +149,7 @@ async def create_output(
             )
         colors += df["color"][i] + [int(df["wind_gust"][i])]  # R, G, B, wind gust speed
         times.append({
-            "time": str(i),
+            "time": i.isoformat(),
             "wl_symbol": df["wl_symbol"][i],
             "yr_symbol": df["symbol"][i],
             "prec_nowcast": df["prec_now"][i],
@@ -173,7 +173,7 @@ async def create_output(
         with open(output, "wb") as f:
             f.write(arr)
     if _format == "json":
-        return json.dumps(times, indent=2)
+        return json.dumps(times, indent=2).replace("NaN", "null")
     elif _format == "html":
         html = ["""<html><head>
         <style>
