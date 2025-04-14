@@ -4,7 +4,6 @@ services:
   endpoint:
     build:
       context: ./endpoint
-      target: development
     restart: unless-stopped
     volumes:
       - ./endpoint:/home/app
@@ -13,3 +12,6 @@ services:
       options:
         max-file: "10"
         max-size: "20m"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1

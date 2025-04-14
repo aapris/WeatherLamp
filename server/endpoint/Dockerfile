@@ -1,55 +1,31 @@
-# pull official base image
-FROM python:3.11-slim-bullseye as appbase
+# Use Python 3.13 slim image based on Debian Bookworm
+FROM python:3.13-slim-bookworm
 
-# set environment variables
+# Set environment variables
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 
-RUN apt-get update --fix-missing && \
-    apt-get update && \
-    apt-get upgrade -y && \
-    apt-get install -y apt-utils git httpie libgeos-dev
+# Install only required system dependencies
+RUN apt-get update && \
+    apt-get install -y libgeos-dev && \
+    rm -rf /var/lib/apt/lists/*
 
-# create directory for the app user
+# Create and set up the app user
 ENV HOME=/home/app
-RUN mkdir -p $HOME
+RUN mkdir -p $HOME && \
+    addgroup --system app && \
+    adduser --system --group app && \
+    chown -R app:app $HOME
+
 WORKDIR $HOME
 
-# create the app user
-RUN addgroup --system app && adduser --system --group app
-RUN chown -R app:app $HOME
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-RUN pip install --upgrade pip
-COPY ./requirements.txt $HOME/requirements.txt
-RUN pip install --no-cache-dir -r $HOME/requirements.txt
-
-USER app
-
-
-# ==============================
-FROM appbase as development
-# ==============================
-
-COPY requirements-dev.txt $HOME/requirements-dev.txt
-RUN pip install --no-cache-dir -r $HOME/requirements-dev.txt \
-    && pip install --no-cache-dir pip-tools
-
-ENV DEV_SERVER=1
-
-COPY --chown=app:app . $HOME/
-
-USER app
-
-EXPOSE 8000/tcp
-
-# ==============================
-FROM appbase as production
-# ==============================
-
-COPY requirements-prod.txt $HOME/requirements-prod.txt
-RUN pip install --no-cache-dir -r $HOME/requirements-prod.txt
-
-COPY --chown=app:app . $HOME/
+# Copy application code
+COPY --chown=app:app . .
 
 USER app
 
