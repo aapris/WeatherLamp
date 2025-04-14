@@ -5,13 +5,12 @@ import logging
 import os
 from collections import OrderedDict
 from logging.config import dictConfig
-from typing import Tuple, Union
 
 import pandas as pd
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, Response, StreamingResponse, FileResponse
+from starlette.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 import yranalyzer
@@ -54,7 +53,7 @@ COLORMAPS["plywood"] = {
 }
 
 
-def validate_args(request: Request) -> Tuple[float, float, int, int, str, str, bool]:
+def validate_args(request: Request) -> tuple[float, float, int, int, str, str, bool]:
     """
     Validate query parameters.
 
@@ -88,7 +87,7 @@ def validate_args(request: Request) -> Tuple[float, float, int, int, str, str, b
 
 
 async def create_forecast(
-        lat: float, lon: float, slot_minutes: int, slot_count: int, dev: bool = False
+    lat: float, lon: float, slot_minutes: int, slot_count: int, dev: bool = False
 ) -> pd.DataFrame:
     """
     Request YR nowcast and forecast from cache or API and create single DataFrame from the data.
@@ -109,15 +108,15 @@ async def create_forecast(
 
 
 async def create_output(
-        lat: float,
-        lon: float,
-        format_: str = "bin",
-        slot_minutes: int = 30,
-        slot_count: int = 16,
-        colormap_name: str = "plain",
-        output: str = None,
-        dev: bool = False,
-) -> Union[str, bytearray]:
+    lat: float,
+    lon: float,
+    format_: str = "bin",
+    slot_minutes: int = 30,
+    slot_count: int = 16,
+    colormap_name: str = "plain",
+    output: str = None,
+    dev: bool = False,
+) -> str | bytearray:
     """
     Create output in requested format.
 
@@ -180,11 +179,11 @@ async def create_output(
     reverse = True  # TODO: add option to use reversed_arr
     if reverse:
         # Split list to a chunks of 4
-        split_arr = list([arr[i: i + 4] for i in range(0, len(arr), 4)])
+        split_arr = list([arr[i : i + 4] for i in range(0, len(arr), 4)])
         # Reverse chunks
         reversed_split_arr = list(reversed(split_arr))
         # Join chunks back to 1-dim array
-        arr = bytearray((itertools.chain.from_iterable(reversed_split_arr)))
+        arr = bytearray(itertools.chain.from_iterable(reversed_split_arr))
     if output is not None:
         with open(output, "wb") as f:
             f.write(arr)
@@ -222,9 +221,7 @@ async def create_output(
             <td>{wl_symbol}</td>
             <td>{prec_nowcast}/{prec_forecast}</td>
             <td>{wind_gust}</td>
-            </tr>""".format(
-                    **t
-                )
+            </tr>""".format(**t)
             )
         html.append("</table></html>")
         return "\n".join(html)
