@@ -220,7 +220,7 @@ async def _get_segment_data(
         first_colormap_name = next(iter(COLORMAPS.keys()))
         colormap = COLORMAPS[first_colormap_name]
         logging.warning(f"Colormap '{colormap_name}' not found, using default '{first_colormap_name}'.")
-
+    print("df", df)
     df = yranalyzer.add_symbol_and_color(df, colormap)
     df = yranalyzer.add_day_night(df, lat, lon)
     # Ensure display options don't affect data processing

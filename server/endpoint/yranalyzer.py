@@ -176,7 +176,6 @@ def _parse_yr_timeseries_to_df(yrdata: dict, cast: str) -> pd.DataFrame:
 
     df = pd.DataFrame(pers, index=pd.to_datetime(timestamps))
     df.index.name = "time"
-    print("cast", cast, "df", df)
     return df
 
 
@@ -217,14 +216,10 @@ def create_combined_forecast(
         df_now_full = yr_precipitation_to_df(nowcast, "now")
         if not df_now_full.empty:
             # Resample nowcast: aggregate and forward fill
-            dfr_now = (
-                df_now_full.resample(res_min)
-                .agg(
-                    {
-                        "prec_now": ["min", "max", "mean"]  # Apply aggregations only to prec_now
-                    }
-                )
-                .ffill()
+            dfr_now = df_now_full.resample(res_min).agg(
+                {
+                    "prec_now": ["min", "max", "mean"]  # Apply aggregations only to prec_now
+                }
             )
             # Flatten multi-index columns if they exist (e.g., ('prec_now', 'max'))
             if isinstance(dfr_now.columns, pd.MultiIndex):
@@ -283,7 +278,6 @@ def create_combined_forecast(
 
     # The assertion might fail if resampling/filtering doesn't produce exactly slot_count rows
     # It's safer to ensure the length after reindexing/padding
-    # assert len(merge.index) == slot_count, f"Merged DataFrame length {len(merge.index)} != slot_count {slot_count}"
     if len(merge.index) != slot_count:
         logging.warning(
             f"Merged DataFrame length {len(merge.index)} != slot_count {slot_count}. Final index range: {merge.index.min()} to {merge.index.max()}"
