@@ -216,7 +216,7 @@ def create_combined_forecast(
         df_now_full = yr_precipitation_to_df(nowcast, "now")
         if not df_now_full.empty:
             # Resample nowcast: aggregate and forward fill
-            dfr_now = df_now_full.resample(res_min).agg(
+            dfr_now = df_now_full.resample(res_min, origin=starttime).agg(
                 {
                     "prec_now": ["min", "max", "mean"]  # Apply aggregations only to prec_now
                 }
@@ -258,7 +258,7 @@ def create_combined_forecast(
         if "symbol" in cols_to_resample and "symbol" in df_fore_full.columns:
             agg_funcs["symbol"] = "first"  # Use 'first' occurrence for symbol in the interval
 
-        dfr_fore = df_fore_full[list(agg_funcs.keys())].resample(res_min).agg(agg_funcs).ffill()
+        dfr_fore = df_fore_full[list(agg_funcs.keys())].resample(res_min, origin=starttime).agg(agg_funcs).ffill()
 
         # Filter by time
         df_fore_resampled = dfr_fore[(dfr_fore.index >= starttime) & (dfr_fore.index < endttime)]
@@ -271,7 +271,6 @@ def create_combined_forecast(
 
     # Merge the resampled and filtered dataframes
     merge = pd.concat([df_now_resampled, df_fore_resampled], axis=1)
-
     # Ensure the final merged frame has exactly slot_count rows, pad if necessary
     expected_index = pd.date_range(start=starttime, periods=slot_count, freq=res_min, tz=datetime.UTC)
     merge = merge.reindex(expected_index).ffill()

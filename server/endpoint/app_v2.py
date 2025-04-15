@@ -1,6 +1,7 @@
 import io
 import json
 import logging
+import math
 import os
 import re
 from collections import OrderedDict
@@ -11,7 +12,7 @@ import pandas as pd
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 import yranalyzer
@@ -277,6 +278,7 @@ async def _process_segments(
     """
     output_segments_data = []
     for segment in segments_data:
+        print("segment", segment)
         segment_times = await _get_segment_data(
             lat=segment["lat"],
             lon=segment["lon"],
@@ -352,10 +354,31 @@ def _format_html(processed_data: list[list[dict[str, Any]]]) -> str:
     return "\n".join(html_parts)
 
 
+def _replace_nan_with_none(obj: Any, nan_found: list[bool]) -> Any:
+    """Recursively replace float NaN with None in a nested structure.
+
+    Also updates the nan_found flag if a NaN is encountered.
+    """
+    if isinstance(obj, dict):
+        return {k: _replace_nan_with_none(v, nan_found) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_replace_nan_with_none(elem, nan_found) for elem in obj]
+    elif isinstance(obj, float) and math.isnan(obj):
+        nan_found[0] = True  # Set the flag
+        return None
+    else:
+        return obj
+
+
 def _format_json(processed_data: list[list[dict[str, Any]]]) -> str:
-    """Formats the processed segment data into a standard JSON string."""
-    # The data is already in the desired list-of-lists-of-dicts structure
-    return json.dumps(processed_data)
+    """Formats the processed segment data into a standard JSON string, replacing NaN with null."""
+    nan_found_tracker = [False]  # Use a list to make it mutable across calls
+    data_without_nan = _replace_nan_with_none(processed_data, nan_found_tracker)
+
+    if nan_found_tracker[0]:
+        logging.debug("NaN values found and replaced with null in JSON output.")
+
+    return json.dumps(data_without_nan)
 
 
 def _format_json_wled(processed_data: list[list[dict[str, Any]]]) -> str:
@@ -437,8 +460,19 @@ async def v2(request: Request) -> Response:
 
 path = os.getenv("ENDPOINT_PATH", "/v2")
 
+# Define the path to the HTML file relative to this script's location
+# Assumes web/ is one level up from server/endpoint/
+HTML_FILE_PATH = os.path.join(os.path.dirname(__file__), "web", "index.html")
+
+
+async def serve_ui(request: Request) -> Response:
+    """Serves the index.html file for the UI."""
+    return FileResponse(HTML_FILE_PATH)
+
+
 routes = [
     Route(path, endpoint=v2, methods=["GET", "POST", "HEAD"]),
+    Route(path + "/ui", endpoint=serve_ui, methods=["GET"]),  # Add UI route
 ]
 
 debug = True if os.getenv("DEBUG") else False
