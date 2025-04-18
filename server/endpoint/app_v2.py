@@ -1,14 +1,19 @@
+import datetime
 import io
 import json
 import logging
 import math
 import os
 import re
+import traceback
 from collections import OrderedDict
 from logging.config import dictConfig
 from typing import Any
 
 import pandas as pd
+import sentry_sdk
+from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
+from sentry_sdk.integrations.starlette import StarletteIntegration
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
@@ -27,6 +32,27 @@ dictConfig(
         "root": {"level": os.getenv("LOG_LEVEL", "INFO"), "handlers": ["wsgi"]},
     }
 )
+
+# Sentry Initialization
+sentry_dsn = os.getenv("SENTRY_DSN")
+sentry_enabled = False
+if sentry_dsn and sentry_dsn.startswith("https"):
+    try:
+        sentry_sdk.init(
+            dsn=sentry_dsn,
+            integrations=[
+                StarletteIntegration(
+                    transaction_style="endpoint",  # Use route path as transaction name
+                )
+            ],
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", 0.1)),  # Sample 10% by default
+            profiles_sample_rate=float(os.getenv("SENTRY_PROFILES_SAMPLE_RATE", 0.1)),  # Sample 10% by default
+            send_default_pii=False,  # Do not send Personally Identifiable Information
+        )
+        sentry_enabled = True
+        logging.info("Sentry initialized successfully.")
+    except Exception as e:
+        logging.error(f"Failed to initialize Sentry: {e}")
 
 # TODO: these should be in some configuration file
 MAX_FORECAST_DURATION_HOURS = 48
@@ -237,7 +263,8 @@ async def _get_segment_data(
         precipitation = df.loc[i, "prec_now"] if pd.notnull(df.loc[i, "prec_now"]) else df.loc[i, "prec_fore"]
 
         # Ensure color exists before accessing elements
-        color_data = df.loc[i, "color"]
+        # Use .get() with a default for color as well, in case the column is missing entirely
+        color_data = df.get("color", [0, 0, 0])[i]  # Access the value at index i
         if isinstance(color_data, list) and len(color_data) == 3:
             hex_color = f"{color_data[0]:02x}{color_data[1]:02x}{color_data[2]:02x}"
             rgb_color = color_data
@@ -248,16 +275,27 @@ async def _get_segment_data(
             hex_color = "000000"
             rgb_color = [0, 0, 0]  # Default to black
 
+        # Use .get(column, None) to safely access potentially missing data
+        yr_symbol = df.get("symbol", None)[i] if "symbol" in df.columns else None
+        wl_symbol = df.get("wl_symbol", None)[i] if "wl_symbol" in df.columns else None
+        prec_now = df.get("prec_now", None)[i] if "prec_now" in df.columns else None
+        prec_fore = df.get("prec_fore", None)[i] if "prec_fore" in df.columns else None
+        prob_of_prec = df.get("prob_of_prec", None)[i] if "prob_of_prec" in df.columns else None
+        wind_gust = df.get("wind_gust", None)[i] if "wind_gust" in df.columns else None
+
+        # Recalculate precipitation based on safely accessed values
+        precipitation = prec_now if pd.notnull(prec_now) else prec_fore
+
         times.append(
             {
                 "time": str(df.index[df.index.get_loc(i)]),  # Use df.index to get the actual Timestamp
-                "yr_symbol": df.loc[i, "symbol"],  # Added yr_symbol for completeness if needed later
-                "wl_symbol": df.loc[i, "wl_symbol"],
-                "prec_nowcast": df.loc[i, "prec_now"],
-                "prec_forecast": df.loc[i, "prec_fore"],
+                "yr_symbol": yr_symbol,
+                "wl_symbol": wl_symbol,
+                "prec_nowcast": prec_now,
+                "prec_forecast": prec_fore,
                 "precipitation": precipitation,  # Combined precipitation field
-                "prob_of_prec": df.loc[i, "prob_of_prec"],
-                "wind_gust": df.loc[i, "wind_gust"],
+                "prob_of_prec": prob_of_prec,
+                "wind_gust": wind_gust,
                 "rgb": rgb_color,
                 "hex": hex_color,
             }
@@ -275,21 +313,55 @@ async def _process_segments(
     :param colormap: Name of the colormap to use.
     :param dev: Flag to use development data.
     :return: List of lists, where each inner list contains the processed time slot data for a segment.
+    :raises Exception: Propagates exceptions from underlying calls like _get_segment_data.
     """
     output_segments_data = []
+    # TODO: Consider running segments concurrently using asyncio.gather
+    # tasks = []
+    # for segment in segments_data:
+    #     task = asyncio.create_task(_get_segment_data(
+    #         lat=segment["lat"],
+    #         lon=segment["lon"],
+    #         slot_minutes=segment["slot_minutes"],
+    #         slot_count=segment["led_count"],
+    #         colormap_name=colormap,
+    #         dev=dev,
+    #     ))
+    #     tasks.append(task)
+    # results = await asyncio.gather(*tasks, return_exceptions=True) # Handle potential errors in tasks
+
+    # for i, result in enumerate(results):
+    #     if isinstance(result, Exception):
+    #         logging.error(f"Error processing segment {segments_data[i]}: {result}")
+    #         # Decide how to handle failed segments (e.g., skip, return error marker)
+    #         # For now, re-raising the first encountered exception
+    #         raise result # Or handle more gracefully
+    #     else:
+    #         segment_times = result
+    #         if segments_data[i]["reversed"]:
+    #             segment_times = segment_times[::-1]
+    #         output_segments_data.append(segment_times)
+
+    # Sequential processing (original logic):
     for segment in segments_data:
-        print("segment", segment)
-        segment_times = await _get_segment_data(
-            lat=segment["lat"],
-            lon=segment["lon"],
-            slot_minutes=segment["slot_minutes"],
-            slot_count=segment["led_count"],
-            colormap_name=colormap,
-            dev=dev,
-        )
-        if segment["reversed"]:
-            segment_times = segment_times[::-1]
-        output_segments_data.append(segment_times)
+        logging.debug(f"Processing segment: {segment}")
+        try:
+            segment_times = await _get_segment_data(
+                lat=segment["lat"],
+                lon=segment["lon"],
+                slot_minutes=segment["slot_minutes"],
+                slot_count=segment["led_count"],
+                colormap_name=colormap,
+                dev=dev,
+            )
+            if segment["reversed"]:
+                segment_times = segment_times[::-1]
+            output_segments_data.append(segment_times)
+        except Exception as e:
+            logging.exception(f"Error processing segment {segment}: {e}")
+            # Re-raise the exception to be caught by the main handler
+            raise Exception(f"Failed to process segment data for {segment['lat']},{segment['lon']}") from e
+
     return output_segments_data
 
 
@@ -308,7 +380,7 @@ def _format_html(processed_data: list[list[dict[str, Any]]]) -> str:
     </head><body><h1>WeatherLamp V2 Output</h1>"""
     ]
 
-    for i, segment_data in enumerate(processed_data):
+    for _, segment_data in enumerate(processed_data):
         # Add segment header (using index or coordinates)
         # Assuming segment data might be empty, handle gracefully
         # coords = (
@@ -319,21 +391,22 @@ def _format_html(processed_data: list[list[dict[str, Any]]]) -> str:
         html_parts.append("<table>\n<tr>")
         # Use keys from the first item as headers (ensure data exists)
         if segment_data:
-            headers = [
-                "time",
-                "yr_symbol",
-                "wl_symbol",
-                "prec_nowcast",
-                "prec_forecast",
-                "precipitation",
-                "prob_of_prec",
-                "wind_gust",
-                "hex",
-            ]
+            # headers = [  # Old hardcoded headers
+            #     "time",
+            #     "yr_symbol",
+            #     "wl_symbol",
+            #     "prec_nowcast",
+            #     "prec_forecast",
+            #     "precipitation",
+            #     "prob_of_prec",
+            #     "wind_gust",
+            #     "hex",
+            # ]
+            headers = list(segment_data[0].keys())  # Use keys from the first data item
+            html_parts.append("<tr>")  # Add row opening tag here
             for header in headers:
                 html_parts.append(f"<th>{header}</th>")
             html_parts.append("</tr>\n")
-
             for t in segment_data:
                 formatted_color = f"rgb({','.join(map(str, t.get('rgb', [0, 0, 0])))})"  # Default color if missing
                 html_parts.append(f"<tr style='background-color: {formatted_color}'>")
@@ -411,51 +484,49 @@ async def v2(request: Request) -> Response:
     """
     Get rain forecast from YR API and return response in the requested format (html, json, json_wled, bin).
 
+    Handles validation and processing exceptions internally, raising HTTPException for client errors
+    and allowing other exceptions to propagate for centralized handling.
+
     :param request: starlette.requests.Request
     :return: Response
+    :raises HTTPException: For validation errors or unsupported formats.
+    :raises Exception: For internal processing errors during segment data fetching/processing.
     """
-    response_format, colormap, dev, segments_data = validate_args_v2(request)
-    logging.debug(
-        f"Request validated: format={response_format}, colormap={colormap}, dev={dev}, segments={len(segments_data)}"
-    )
-
     try:
-        # Process data for all segments
-        processed_segments_data = await _process_segments(segments_data, colormap, dev)
-        logging.debug(f"Processed data for {len(processed_segments_data)} segments.")
+        response_format, colormap, dev, segments_data = validate_args_v2(request)
+        logging.info(
+            f"Request validated: format={response_format}, colormap={colormap}, dev={dev}, segments={len(segments_data)}"
+        )
+    except HTTPException as e:
+        # Validation errors are specific client errors, log and re-raise
+        logging.warning(f"Validation failed: {e.detail}")
+        raise e  # Caught by http_exception_handler
+    # _ = 1 / 0 # POISTETTU TESTIVIRHE
+    # No try-except block here for _process_segments.
+    # Let exceptions propagate to the generic exception handler.
+    processed_segments_data = await _process_segments(segments_data, colormap, dev)
+    logging.debug(f"Processed data for {len(processed_segments_data)} segments.")
 
-        # Format the data based on the requested format
-        if response_format == "html":
-            content = _format_html(processed_segments_data)
-            return HTMLResponse(content)
-        elif response_format == "json":
-            content = _format_json(processed_segments_data)
-            return Response(content, media_type="application/json")
-        elif response_format == "json_wled":
-            content = _format_json_wled(processed_segments_data)
-            return Response(content, media_type="application/json")
-        elif response_format == "bin":
-            content_bytes = _format_bin(processed_segments_data)
-            return StreamingResponse(io.BytesIO(content_bytes), media_type="application/octet-stream")
-        else:
-            # Should not happen if validation is correct, but handle defensively
-            logging.error(f"Unsupported response format requested: {response_format}")
-            raise HTTPException(
-                status_code=400,
-                detail={"error_code": "INVALID_FORMAT", "message": f"Unsupported format: {response_format}"},
-            )
-
-    except Exception as e:
-        logging.exception(f"Error during request processing in v2 endpoint: {e}")
-        # Re-raise as HTTPException or return a generic error response
-        # Using the custom handler, raising HTTPException is cleaner
+    # Format the data based on the requested format
+    if response_format == "html":
+        content = _format_html(processed_segments_data)
+        return HTMLResponse(content)
+    elif response_format == "json":
+        content = _format_json(processed_segments_data)
+        return Response(content, media_type="application/json")
+    elif response_format == "json_wled":
+        content = _format_json_wled(processed_segments_data)
+        return Response(content, media_type="application/json")
+    elif response_format == "bin":
+        content_bytes = _format_bin(processed_segments_data)
+        return StreamingResponse(io.BytesIO(content_bytes), media_type="application/octet-stream")
+    else:
+        # This case should be caught by validation, but handle defensively
+        logging.error(f"Unsupported response format requested: {response_format}")
         raise HTTPException(
-            status_code=500,
-            detail={
-                "error_code": "PROCESSING_ERROR",
-                "message": "An internal error occurred while processing the request.",
-            },
-        ) from e
+            status_code=400,
+            detail={"error_code": "INVALID_FORMAT", "message": f"Unsupported format: {response_format}"},
+        )
 
 
 path = os.getenv("ENDPOINT_PATH", "/v2")
@@ -480,13 +551,70 @@ debug = True if os.getenv("DEBUG") else False
 app = Starlette(debug=debug, routes=routes)
 
 
-# Custom exception handler for HTTPException
+# --- Error Dumping Function ---
+async def dump_error_to_file(request: Request | None, exc: Exception):
+    """Dumps detailed error information to a timestamped file."""
+    logging.info("Entered dump_error_to_file")
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    # Use environment variable for dump directory or default
+    dump_dir = os.getenv("ERROR_DUMP_DIR", "error_dumps")
+    filename = f"error_dump_{timestamp}.log"
+    try:
+        os.makedirs(dump_dir, exist_ok=True)
+        filepath = os.path.join(dump_dir, filename)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(f"Timestamp: {timestamp}\n")
+            f.write(f"Exception Type: {type(exc).__name__}\n")
+            f.write(f"Exception Message: {exc}\n\n")
+
+            f.write("--- Request Details ---\n")
+            if request:
+                f.write(f"URL: {request.url}\n")
+                f.write(f"Method: {request.method}\n")
+                # Avoid logging potentially sensitive headers unless explicitly needed/allowed
+                # f.write(f"Headers: {dict(request.headers)}\n")
+                client_host = request.client.host if request.client else "N/A"
+                f.write(f"Client Host: {client_host}\n")
+                # Safely attempt to read body - might fail or be large
+                try:
+                    # Limit body size to prevent huge logs
+                    max_body_log_size = 1024 * 10  # 10 KB limit
+                    body_bytes = await request.body()
+                    f.write("Body:\n")  # Add newline after "Body:" label
+                    if len(body_bytes) > max_body_log_size:
+                        f.write(f"(Truncated, size={len(body_bytes)} > {max_body_log_size})\n")
+                        f.write(body_bytes[:max_body_log_size].decode(errors="replace"))
+                        f.write("...\n")  # Add newline after truncated body
+                    else:
+                        f.write(body_bytes.decode(errors="replace"))
+                        f.write("\n")  # Add newline after full body
+                except Exception as body_exc:
+                    f.write(f"(Error reading body: {body_exc})\n")
+            else:
+                f.write("Request object not available.\n")
+
+            f.write("\n--- Traceback ---\n")
+            traceback.print_exc(file=f)
+
+        logging.info(f"Error details dumped to {filepath}")
+    except Exception as dump_exc:
+        # Log error during dumping process itself
+        logging.error(f"CRITICAL: Failed to dump error details to {filename}. Dump Error: {dump_exc}", exc_info=True)
+        # Optionally log the original exception here as well if dumping failed
+        logging.error(f"Original Exception ({type(exc).__name__}): {exc}", exc_info=False)
+    logging.info("Exiting dump_error_to_file")
+
+
+# --- Custom Exception Handlers ---
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     """
-    Custom exception handler to return JSON errors for HTTPException.
+    Custom exception handler for HTTPException. Dumps error and returns JSON response.
     """
+    # Dump the error details first
+    await dump_error_to_file(request, exc)
+
+    # Prepare JSON response content
     if isinstance(exc.detail, dict):
-        # If detail is a dictionary, use its structure
         error_content = {
             "error_code": exc.detail.get("error_code", f"HTTP_{exc.status_code}"),
             "message": exc.detail.get("message", "An error occurred."),
@@ -494,26 +622,70 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         if "details" in exc.detail:
             error_content["details"] = exc.detail["details"]
     else:
-        # Fallback for string details
-        error_content = {"error_code": f"HTTP_{exc.status_code}", "message": exc.detail}
+        error_content = {"error_code": f"HTTP_{exc.status_code}", "message": str(exc.detail)}
 
-    # Log the error that triggered the handler
-    logging.error(f"HTTP Exception: Status={exc.status_code}, Detail={exc.detail}", exc_info=exc if debug else False)
+    # Log the handled HTTP exception (less severe than unhandled ones)
+    logging.warning(
+        f"Handled HTTPException: Status={exc.status_code}, Code={error_content.get('error_code')}, Msg={error_content.get('message')}"
+        # Avoid logging full exc_info for common HTTPExceptions unless needed
+        # exc_info=exc if debug else False
+    )
 
     return JSONResponse(status_code=exc.status_code, content=error_content)
 
 
-# Register the custom exception handler
+async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    Custom handler for unhandled Exceptions. Dumps error and returns a generic 500 JSON response.
+    """
+    logging.info(f"Entered generic_exception_handler for exception: {type(exc).__name__}")
+    # Log the critical unhandled exception with stack trace
+    logging.exception(f"Unhandled exception during request to {request.url}: {exc}", exc_info=exc)
+
+    logging.info("Attempting to dump error to file...")
+    # Dump the error details to file
+    try:
+        await dump_error_to_file(request, exc)
+        logging.info("Successfully called dump_error_to_file.")
+    except Exception as dump_call_exc:
+        logging.error(f"Exception occurred during call to dump_error_to_file: {dump_call_exc}", exc_info=True)
+
+    # Explicitly capture exception in Sentry and attempt to flush
+    if sentry_enabled:
+        logging.info("Attempting to capture exception to Sentry and flush...")
+        try:
+            sentry_sdk.capture_exception(exc)
+            sentry_sdk.flush(timeout=5.0)  # Give 5 seconds for flush
+            logging.info("Sentry capture_exception and flush called.")
+        except Exception as sentry_exc:
+            logging.error(f"Exception occurred during Sentry capture/flush: {sentry_exc}", exc_info=True)
+
+    logging.info("Returning 500 JSON response from generic_exception_handler.")
+    # Return a generic 500 error response
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error_code": "INTERNAL_SERVER_ERROR",
+            "message": "An unexpected internal server error occurred.",
+            # Optionally include details in debug mode, but be cautious
+            "details": str(exc) if debug else None,
+        },
+    )
+
+
+# Register the custom exception handlers BEFORE wrapping with Sentry
 app.add_exception_handler(HTTPException, http_exception_handler)
-# Add handler for generic exceptions as well during debug?
-# async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-#     logging.exception(f"Unhandled exception: {exc}", exc_info=exc) # Log with stack trace
-#     return JSONResponse(
-#         status_code=500,
-#         content={
-#             "error_code": "INTERNAL_SERVER_ERROR",
-#             "message": "An unexpected error occurred.",
-#             "details": str(exc) if debug else None # Show details only in debug mode
-#         }
-#     )
-# app.add_exception_handler(Exception, generic_exception_handler) # Optional: Catch all other exceptions
+app.add_exception_handler(Exception, generic_exception_handler)  # Catch all other exceptions
+
+
+# Wrap with Sentry middleware if enabled
+if sentry_enabled:
+    try:
+        app = SentryAsgiMiddleware(app)
+        logging.info("Sentry ASGI middleware enabled.")
+    except Exception as e:
+        logging.error(f"Failed to wrap app with Sentry middleware: {e}")
+
+print("Sentry enabled:", sentry_enabled, "Sentry DSN:", sentry_dsn)
+# Remove the old optional generic handler registration comment block if it exists
+# # app.add_exception_handler(Exception, generic_exception_handler) # Optional: Catch all other exceptions
