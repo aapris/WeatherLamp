@@ -145,7 +145,8 @@ def _parse_yr_timeseries_to_df(yrdata: dict, cast: str) -> pd.DataFrame:
             d1h = t["data"]["next_1_hours"]
             # Precipitation
             add_to_dict(pers, f"prec_{cast}", d1h["details"]["precipitation_amount"])
-            add_to_dict(pers, "prob_of_prec", d1h["details"]["probability_of_precipitation"])
+            # probability_of_precipitation is not always present, at least outside of Scandinavia
+            add_to_dict(pers, "prob_of_prec", d1h["details"].get("probability_of_precipitation"))
             # Weather symbol
             symbol_code = d1h["summary"]["symbol_code"]
             if symbol_code.find("_") >= 0:  # Check for _day, _night postfix
@@ -156,7 +157,7 @@ def _parse_yr_timeseries_to_df(yrdata: dict, cast: str) -> pd.DataFrame:
             # Wind and other forecasts
             did = t["data"]["instant"]["details"]
             add_to_dict(pers, "wind_speed", did["wind_speed"])
-            add_to_dict(pers, "wind_gust", did["wind_speed_of_gust"])
+            add_to_dict(pers, "wind_gust", did.get("wind_speed_of_gust"))
 
         timestamps.append(datetime.datetime.fromisoformat(t["time"]))
 
@@ -197,6 +198,9 @@ def create_combined_forecast(
     """
     Fetches nowcast and forecast data, resamples and filters them to the specified slots,
     and merges the results into a single Pandas DataFrame.
+
+    nowcast may be None, if original coordinates are not in YR coverage (yrapiclient.NOWCAST_COVERAGE_WKT),
+    in which case a mock nowcast DataFrame is created.
 
     :param nowcast: Raw nowcast data from YR API (or None).
     :param forecast: Raw forecast data from YR API.
@@ -257,9 +261,7 @@ def create_combined_forecast(
         }
         if "symbol" in cols_to_resample and "symbol" in df_fore_full.columns:
             agg_funcs["symbol"] = "first"  # Use 'first' occurrence for symbol in the interval
-
         dfr_fore = df_fore_full[list(agg_funcs.keys())].resample(res_min, origin=starttime).agg(agg_funcs).ffill()
-
         # Filter by time
         df_fore_resampled = dfr_fore[(dfr_fore.index >= starttime) & (dfr_fore.index < endttime)]
     else:  # Handle empty dataframe after parsing
@@ -273,7 +275,8 @@ def create_combined_forecast(
     merge = pd.concat([df_now_resampled, df_fore_resampled], axis=1)
     # Ensure the final merged frame has exactly slot_count rows, pad if necessary
     expected_index = pd.date_range(start=starttime, periods=slot_count, freq=res_min, tz=datetime.UTC)
-    merge = merge.reindex(expected_index).ffill()
+    # never use ffill, prec_nowcast is used when it is available and prec_forecast is used otherwise
+    merge = merge.reindex(expected_index)  # .ffill()
 
     # The assertion might fail if resampling/filtering doesn't produce exactly slot_count rows
     # It's safer to ensure the length after reindexing/padding
@@ -325,43 +328,63 @@ def add_symbol_and_color(df: pd.DataFrame, colormap: dict):
         if pd.notnull(df["prec_now"][i]):
             precipitation = df["prec_now"][i]
             nowcast = True
+            prob_of_prec = None  # Not relevant for nowcast logic path
         else:
             precipitation = df["prec_fore"][i]
             nowcast = False
-        prob_of_prec = df["prob_of_prec"][i]
+            # Safely get probability of precipitation
+            if "prob_of_prec" in df.columns and pd.notnull(df["prob_of_prec"][i]):
+                prob_of_prec = df["prob_of_prec"][i]
+            else:
+                prob_of_prec = None  # Default to None if column missing or value is NaN
+
+        # Determine colors_key based on nowcast or forecast data
+        colors_key = None  # Initialize colors_key
         if nowcast:
             if precipitation >= 3.0:
                 colors_key = "VERYHEAVYRAIN"
-                symbols.append(colors_key)
-                colors.append(colormap[colors_key])
             elif precipitation >= 1.5:
                 colors_key = "HEAVYRAIN"
-                symbols.append(colors_key)
-                colors.append(colormap[colors_key])
             elif precipitation >= 0.5:
                 colors_key = "RAIN"
-                symbols.append(colors_key)
-                colors.append(colormap[colors_key])
             elif precipitation > 0.0:
                 colors_key = "LIGHTRAIN"
-                symbols.append(colors_key)
-                colors.append(colormap[colors_key])
-            elif precipitation == 0.0 and rain_re.findall(df["symbol"][i]):
+            elif (
+                precipitation == 0.0
+                and "symbol" in df.columns
+                and pd.notnull(df["symbol"][i])
+                and rain_re.findall(str(df["symbol"][i]))
+            ):
+                # Ensure symbol exists and is not null before regex check
                 colors_key = "CLOUDY"
-                symbols.append(colors_key)
-                colors.append(colormap[colors_key])
-            else:
+            elif "symbol" in df.columns and pd.notnull(df["symbol"][i]) and df["symbol"][i] in symbolmap:
+                # Ensure symbol exists, is not null and is in symbolmap
                 colors_key = symbolmap[df["symbol"][i]]
-                symbols.append(colors_key)
-                colors.append(colormap[colors_key])
-        else:
+            # If none of the above conditions match, colors_key remains None or default value
+
+        elif "symbol" in df.columns and pd.notnull(df["symbol"][i]) and df["symbol"][i] in symbolmap:
+            # Ensure symbol exists, is not null and is in symbolmap
             symbol = df["symbol"][i]
             colors_key = symbolmap[symbol]
-            if colors_key == "LIGHTRAIN":
-                if prob_of_prec <= 50:
-                    colors_key = "LIGHTRAIN_LT50"
+            # Adjust for low probability light rain only if prob_of_prec is a valid number
+            if colors_key == "LIGHTRAIN" and isinstance(prob_of_prec, (int, float)) and prob_of_prec <= 50:
+                colors_key = "LIGHTRAIN_LT50"
+            # If symbol is missing, null, or not in symbolmap, colors_key remains None or default value
+
+        # Append symbol and color if colors_key was determined and exists in colormap
+        if colors_key and colors_key in colormap:
             symbols.append(colors_key)
             colors.append(colormap[colors_key])
+        else:
+            # Append default/fallback values if colors_key is None or not in colormap
+            logging.warning(
+                f"Could not determine color for timestamp {i}. colors_key: {colors_key}. Appending default."
+            )
+            symbols.append("UNKNOWN")  # Or some default symbol
+            # Try to get a default color or use a placeholder
+            default_color = colormap.get("UNKNOWN", colormap.get("CLOUDY", [0, 0, 0]))  # Example fallback
+            colors.append(default_color)
+
     df["wl_symbol"] = symbols
     df["color"] = colors
     return df
