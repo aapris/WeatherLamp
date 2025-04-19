@@ -121,24 +121,28 @@ def validate_args_v2(request: Request) -> tuple[str, str, bool, list[dict]]:
             if reversed_flag not in [0, 1]:
                 raise ValueError("Reversed flag must be 0 or 1")
 
-            # Derive slot_minutes from program string (e.g., "r5min", "program15min")
-            match = re.search(r"(\d+)min$", program)  # Use search and match digits followed by 'min' at the end
-            if not match:
-                # Handle other potential program types or raise error
-                raise ValueError(
-                    f"Invalid program format: '{program}'. Expected format ending like '5min', '15min' etc."
-                )
-            slot_minutes = int(match.group(1))
+            # Handle "dark" program type
+            if program == "dark":
+                slot_minutes = 0  # Not needed for dark segments
+            else:
+                # Derive slot_minutes from program string (e.g., "r5min", "program15min")
+                match = re.search(r"(\d+)min$", program)  # Use search and match digits followed by 'min' at the end
+                if not match:
+                    # Handle other potential program types or raise error
+                    raise ValueError(
+                        f"Invalid program format: '{program}'. Expected format ending like '5min', '15min' etc., or 'dark'."
+                    )
+                slot_minutes = int(match.group(1))
 
-            # Validate total duration (equivalent to old check)
-            # led_count is used as slot_count here
-            if slot_minutes / 60 * led_count > MAX_FORECAST_DURATION_HOURS:
-                error_detail = {
-                    "error_code": "DURATION_TOO_LONG",
-                    "message": f"Derived interval * led_count cannot exceed {MAX_FORECAST_DURATION_HOURS} hours for a segment.",
-                    "details": {"segment": segment_str, "derived_duration_hours": slot_minutes / 60 * led_count},
-                }
-                raise HTTPException(status_code=400, detail=error_detail)
+                # Validate total duration (equivalent to old check)
+                # led_count is used as slot_count here
+                if slot_minutes / 60 * led_count > MAX_FORECAST_DURATION_HOURS:
+                    error_detail = {
+                        "error_code": "DURATION_TOO_LONG",
+                        "message": f"Derived interval * led_count cannot exceed {MAX_FORECAST_DURATION_HOURS} hours for a segment.",
+                        "details": {"segment": segment_str, "derived_duration_hours": slot_minutes / 60 * led_count},
+                    }
+                    raise HTTPException(status_code=400, detail=error_detail)
 
             segment_info = {
                 "index": index,
@@ -346,6 +350,30 @@ async def _process_segments(
     for segment in segments_data:
         logging.debug(f"Processing segment: {segment}")
         try:
+            # Handle "dark" segments directly
+            if segment["program"] == "dark":
+                dark_segment_times = []
+                for _ in range(segment["led_count"]):
+                    # Create a dictionary representing a dark LED slot
+                    dark_segment_times.append(
+                        {
+                            "time": None,  # No specific timestamp needed
+                            "yr_symbol": None,
+                            "wl_symbol": "dark",  # Specific symbol for WLED state if needed
+                            "prec_nowcast": None,
+                            "prec_forecast": None,
+                            "precipitation": None,
+                            "prob_of_prec": None,
+                            "wind_gust": None,
+                            "rgb": [0, 0, 0],
+                            "hex": "000000",
+                        }
+                    )
+                output_segments_data.append(dark_segment_times)
+                logging.debug(f"Generated dark segment data for segment index {segment['index']}")
+                continue  # Move to the next segment
+
+            # Process normal segments by fetching weather data
             segment_times = await _get_segment_data(
                 lat=segment["lat"],
                 lon=segment["lon"],
@@ -354,6 +382,7 @@ async def _process_segments(
                 colormap_name=colormap,
                 dev=dev,
             )
+            # Reverse the segment if requested (only for non-dark segments)
             if segment["reversed"]:
                 segment_times = segment_times[::-1]
             output_segments_data.append(segment_times)

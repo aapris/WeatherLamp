@@ -727,7 +727,17 @@
                 // Populate table rows
                 segmentData.forEach(item => {
                     const row = tbody.insertRow();
-                    row.style.backgroundColor = `#${item.hex || 'ffffff'}`; // Set background color
+                    const hexBgColor = item.hex || 'ffffff'; // Default to white if hex is missing
+                    row.style.backgroundColor = `#${hexBgColor}`; // Set background color
+
+                    // Simple check: If RGB is [0, 0, 0], use white text, otherwise black
+                    const rgbColor = item.rgb;
+                    let textColor = 'black'; // Default to black
+                    if (Array.isArray(rgbColor) && rgbColor[0] === 0 && rgbColor[1] === 0 && rgbColor[2] === 0) {
+                        textColor = 'white';
+                    }
+                    row.style.color = textColor;
+
                     headers.forEach(header => {
                         const cell = row.insertCell();
                         let value = item[header];
