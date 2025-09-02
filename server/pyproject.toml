@@ -10,6 +10,7 @@ dependencies = [
     "astral~=3.2",
     "httpx~=0.28.1",
     "pandas~=2.2.3",
+    "pydantic~=2.10.4",
     "python-dotenv~=1.1.0",
     "sentry-sdk~=2.25.1",
     "shapely~=2.0.1",

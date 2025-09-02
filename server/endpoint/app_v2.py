@@ -8,10 +8,12 @@ import re
 import traceback
 from collections import OrderedDict
 from logging.config import dictConfig
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import sentry_sdk
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sentry_sdk.integrations.asgi import SentryAsgiMiddleware
 from sentry_sdk.integrations.starlette import StarletteIntegration
 from starlette.applications import Starlette
@@ -59,35 +61,142 @@ MAX_FORECAST_DURATION_HOURS = 48
 SEGMENT_PARTS = 6
 COLORMAPS = OrderedDict()
 
-COLORMAPS["plain"] = {
-    "CLEARSKY": [3, 3, 235],
-    "PARTLYCLOUDY": [65, 126, 205],
-    "CLOUDY": [180, 200, 200],
-    "LIGHTRAIN_LT50": [161, 228, 74],
-    "LIGHTRAIN": [240, 240, 42],
-    "RAIN": [241, 155, 44],
-    "HEAVYRAIN": [236, 94, 42],
-    "VERYHEAVYRAIN": [234, 57, 248],
-}
+
+class RGBColor(BaseModel):
+    """RGB color value with validation."""
+
+    red: int = Field(ge=0, le=255, description="Red component (0-255)")
+    green: int = Field(ge=0, le=255, description="Green component (0-255)")
+    blue: int = Field(ge=0, le=255, description="Blue component (0-255)")
+
+    @field_validator("red", "green", "blue", mode="before")
+    @classmethod
+    def validate_color_component(cls, v: Any) -> int:
+        """Validate that color component is an integer."""
+        if not isinstance(v, int):
+            raise ValueError(f"Color component must be an integer, got {type(v).__name__}")
+        return v
+
+    def to_list(self) -> list[int]:
+        """Convert to [R, G, B] list format."""
+        return [self.red, self.green, self.blue]
+
+    @classmethod
+    def from_list(cls, rgb_list: list[int]) -> "RGBColor":
+        """Create RGBColor from [R, G, B] list."""
+        if not isinstance(rgb_list, list) or len(rgb_list) != 3:
+            raise ValueError("RGB must be a list of exactly 3 integers")
+        return cls(red=rgb_list[0], green=rgb_list[1], blue=rgb_list[2])
 
 
-def validate_args_v2(request: Request) -> tuple[str, str, bool, list[dict]]:
+class WeatherColorMap(BaseModel):
+    """Complete colormap definition with validation."""
+
+    CLEARSKY: RGBColor
+    PARTLYCLOUDY: RGBColor
+    CLOUDY: RGBColor
+    LIGHTRAIN_LT50: RGBColor
+    LIGHTRAIN: RGBColor
+    RAIN: RGBColor
+    HEAVYRAIN: RGBColor
+    VERYHEAVYRAIN: RGBColor
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def validate_rgb_field(cls, v: Any) -> RGBColor:
+        """Convert list format to RGBColor if needed."""
+        if isinstance(v, list):
+            return RGBColor.from_list(v)
+        elif isinstance(v, RGBColor):
+            return v
+        else:
+            raise ValueError(f"Expected list or RGBColor, got {type(v).__name__}")
+
+    def to_dict(self) -> dict[str, list[int]]:
+        """Convert to the legacy dictionary format used by the application."""
+        return {field_name: getattr(self, field_name).to_list() for field_name in self.model_fields.keys()}
+
+
+def load_colormaps() -> None:
+    """
+    Load all colormap JSON files from the colormaps directory into the global COLORMAPS dictionary.
+
+    Each JSON file should contain color definitions as key-value pairs where keys are weather symbols
+    and values are RGB color arrays [R, G, B]. Uses Pydantic for validation.
+    """
+    colormaps_dir = Path(__file__).parent / "colormaps"
+
+    if not colormaps_dir.exists():
+        logging.warning(f"Colormaps directory not found: {colormaps_dir}")
+        return
+
+    for json_file in colormaps_dir.glob("*.json"):
+        colormap_name = json_file.stem  # filename without extension
+        try:
+            with open(json_file, encoding="utf-8") as f:
+                raw_data = json.load(f)
+
+            # Validate using Pydantic model
+            colormap = WeatherColorMap.model_validate(raw_data)
+
+            # Convert to legacy format and store
+            COLORMAPS[colormap_name] = colormap.to_dict()
+            logging.info(f"Loaded colormap '{colormap_name}' from {json_file}")
+
+        except json.JSONDecodeError as e:
+            logging.error(f"Failed to parse JSON in {json_file}: {e}")
+        except ValidationError as e:
+            logging.error(f"Invalid colormap data in {json_file}: {e}")
+        except Exception as e:
+            logging.error(f"Failed to load colormap from {json_file}: {e}")
+
+    if not COLORMAPS:
+        logging.warning("No valid colormaps loaded, using fallback default")
+        # Create fallback using Pydantic model for consistency
+        try:
+            fallback_data = {
+                "CLEARSKY": [3, 3, 235],
+                "PARTLYCLOUDY": [65, 126, 205],
+                "CLOUDY": [180, 200, 200],
+                "LIGHTRAIN_LT50": [161, 228, 74],
+                "LIGHTRAIN": [240, 240, 42],
+                "RAIN": [241, 155, 44],
+                "HEAVYRAIN": [236, 94, 42],
+                "VERYHEAVYRAIN": [234, 57, 248],
+            }
+            fallback_colormap = WeatherColorMap.model_validate(fallback_data)
+            COLORMAPS["plain"] = fallback_colormap.to_dict()
+        except ValidationError as e:
+            logging.critical(f"Failed to create fallback colormap: {e}")
+            # This should never happen, but if it does, we need some basic fallback
+            COLORMAPS["plain"] = fallback_data
+
+
+def validate_args_v2(request: Request) -> tuple[str, str, bool, bool, list[dict]]:
     """
     Validate query parameters for V2 endpoint.
 
-    Parses common parameters (format, colormap, dev) and segment data from the 's' query parameter.
+    Parses common parameters (format, cm, dev, cm_preview) and segment data from the 's' query parameter.
     The 's' parameter contains one or more segments separated by '+' or ' '.
     Each segment format: index,program,led_count,reversed,lat,lon
     Example: s=1,r5min,12,0,60.167,24.951+2,r15min,8,1,60.167,24.951
 
+    Common parameters:
+    - format: response format (json_wled, json, html, bin)
+    - cm: colormap name (defaults to "plain")
+    - dev: use development/sample data instead of live API
+    - cm_preview: return colormap colors scaled to segment length instead of weather data
+    - s: segment definitions
+
     :param request: starlette.requests.Request
-    :return: tuple containing response_format, colormap, dev flag, and a list of segment dictionaries.
+    :return: tuple containing response_format, colormap, dev flag, cm_preview flag, and a list of segment dictionaries.
              Each segment dictionary contains: index, program, led_count, reversed, lat, lon, slot_minutes.
     :raises HTTPException: if parameters are invalid or missing.
     """
     response_format = request.query_params.get("format", "json_wled")
-    colormap = request.query_params.get("colormap", "plain")
+    colormap = request.query_params.get("cm", "plain")
     dev = request.query_params.get("dev") is not None
+    cm_preview = request.query_params.get("cm_preview") is not None
 
     s_param = request.query_params.get("s")
     if not s_param:
@@ -172,7 +281,7 @@ def validate_args_v2(request: Request) -> tuple[str, str, bool, list[dict]]:
             }
             raise HTTPException(status_code=400, detail=error_detail) from None
 
-    return response_format, colormap, dev, segments_data
+    return response_format, colormap, dev, cm_preview, segments_data
 
 
 async def create_forecast(
@@ -307,8 +416,57 @@ async def _get_segment_data(
     return times
 
 
+def _create_colormap_preview(colormap_name: str, led_count: int) -> list[dict[str, Any]]:
+    """
+    Creates a preview of the colormap by distributing all colors evenly across the segment length.
+
+    :param colormap_name: Name of the colormap to use
+    :param led_count: Number of LEDs in the segment
+    :return: List of dictionaries containing color data for each LED position
+    """
+    if colormap_name in COLORMAPS:
+        colormap = COLORMAPS[colormap_name]
+    else:
+        # Get the first colormap as default if the requested one doesn't exist
+        first_colormap_name = next(iter(COLORMAPS.keys()))
+        colormap = COLORMAPS[first_colormap_name]
+        logging.warning(f"Colormap '{colormap_name}' not found, using default '{first_colormap_name}'.")
+
+    # Get all colors from the colormap
+    colors = list(colormap.values())  # This gives us all RGB color arrays
+
+    # Create preview data by cycling through colors
+    preview_data = []
+    for i in range(led_count):
+        # Distribute colors evenly across the segment
+        color_index = int((i / led_count) * len(colors)) if led_count > 1 else 0
+        # Ensure we don't exceed the color list bounds
+        if color_index >= len(colors):
+            color_index = len(colors) - 1
+
+        rgb_color = colors[color_index]
+        hex_color = f"{rgb_color[0]:02x}{rgb_color[1]:02x}{rgb_color[2]:02x}"
+
+        preview_data.append(
+            {
+                "time": None,
+                "yr_symbol": None,
+                "wl_symbol": f"colormap_preview_{list(colormap.keys())[color_index]}",
+                "prec_nowcast": None,
+                "prec_forecast": None,
+                "precipitation": None,
+                "prob_of_prec": None,
+                "wind_gust": None,
+                "rgb": rgb_color,
+                "hex": hex_color,
+            }
+        )
+
+    return preview_data
+
+
 async def _process_segments(
-    segments_data: list[dict[str, Any]], colormap: str, dev: bool
+    segments_data: list[dict[str, Any]], colormap: str, dev: bool, cm_preview: bool = False
 ) -> list[list[dict[str, Any]]]:
     """
     Processes forecast data for all requested segments.
@@ -316,6 +474,7 @@ async def _process_segments(
     :param segments_data: List of segment definitions from validation.
     :param colormap: Name of the colormap to use.
     :param dev: Flag to use development data.
+    :param cm_preview: Flag to return colormap preview instead of weather data.
     :return: List of lists, where each inner list contains the processed time slot data for a segment.
     :raises Exception: Propagates exceptions from underlying calls like _get_segment_data.
     """
@@ -350,6 +509,16 @@ async def _process_segments(
     for segment in segments_data:
         logging.debug(f"Processing segment: {segment}")
         try:
+            # Handle colormap preview mode
+            if cm_preview:
+                segment_times = _create_colormap_preview(colormap, segment["led_count"])
+                # Reverse the segment if requested
+                if segment["reversed"]:
+                    segment_times = segment_times[::-1]
+                output_segments_data.append(segment_times)
+                logging.debug(f"Generated colormap preview for segment index {segment['index']}")
+                continue  # Move to the next segment
+
             # Handle "dark" segments directly
             if segment["program"] == "dark":
                 dark_segment_times = []
@@ -522,9 +691,9 @@ async def v2(request: Request) -> Response:
     :raises Exception: For internal processing errors during segment data fetching/processing.
     """
     try:
-        response_format, colormap, dev, segments_data = validate_args_v2(request)
+        response_format, colormap, dev, cm_preview, segments_data = validate_args_v2(request)
         logging.info(
-            f"Request validated: format={response_format}, colormap={colormap}, dev={dev}, segments={len(segments_data)}"
+            f"Request validated: format={response_format}, colormap={colormap}, dev={dev}, cm_preview={cm_preview}, segments={len(segments_data)}"
         )
     except HTTPException as e:
         # Validation errors are specific client errors, log and re-raise
@@ -533,7 +702,7 @@ async def v2(request: Request) -> Response:
     # _ = 1 / 0 # POISTETTU TESTIVIRHE
     # No try-except block here for _process_segments.
     # Let exceptions propagate to the generic exception handler.
-    processed_segments_data = await _process_segments(segments_data, colormap, dev)
+    processed_segments_data = await _process_segments(segments_data, colormap, dev, cm_preview)
     logging.debug(f"Processed data for {len(processed_segments_data)} segments.")
 
     # Format the data based on the requested format
@@ -701,6 +870,10 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
         },
     )
 
+
+# Load colormaps from files
+load_colormaps()
+logging.info(f"Loaded {len(COLORMAPS)} colormaps: {list(COLORMAPS.keys())}")
 
 # Register the custom exception handlers BEFORE wrapping with Sentry
 app.add_exception_handler(HTTPException, http_exception_handler)
