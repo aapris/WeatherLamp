@@ -1,5 +1,5 @@
-# Use Python 3.13 slim image based on Debian Bookworm
-FROM python:3.13-slim-bookworm
+# Use Python 3.13 slim image based on Debian Trixie
+FROM python:3.13-slim-trixie
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE 1
