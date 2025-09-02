@@ -10,6 +10,8 @@ no_git.txt
 *.json
 *.swp
 
+server/history
+
 
 
 # Byte-compiled / optimized / DLL files
