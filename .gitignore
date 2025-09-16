@@ -7,7 +7,6 @@ no_git.txt
 .pio
 .vscode
 *.bin
-*.json
 *.swp
 
 server/history
