@@ -27,7 +27,7 @@ MAX_LON = 180.0
 # https://api.met.no/weatherapi/nowcast/2.0/coverage.zip
 # then simplified and shrunk using negative buffer:
 # obj.simplify(1).buffer(-1).simplify(1)
-nowcast_coverage_wkt = """POLYGON ((
+NOWCAST_COVERAGE_WKT = """POLYGON ((
     2.547779705832076 53.30271492607023,
     -2.905815348621908 64.65327205671177,
     -9.497201603182553 71.32483641294951,
@@ -147,7 +147,7 @@ async def get_nowcast(lat: float, lon: float, dev: bool) -> dict | None:
     :param dev: if True use local sample response data instead of remote API
     :return: response data
     """
-    nowcast_coverage = wkt.loads(nowcast_coverage_wkt)
+    nowcast_coverage = wkt.loads(NOWCAST_COVERAGE_WKT)
     yrdata = None
     if nowcast_coverage.contains(Point(lon, lat)):
         yrdata = await get_yrdata(lat, lon, "nowcast", dev)
