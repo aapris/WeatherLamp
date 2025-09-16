@@ -82,8 +82,10 @@
 
         #params-form input[type="number"],
         #params-form input[type="text"] {
-            width: calc(100% - 12px);
-            /* Adjust for padding */
+            width: 100%;
+            /* Take full width of container */
+            box-sizing: border-box;
+            /* Include padding in width */
             padding: 5px;
             margin-bottom: 10px;
             border: 1px solid #ccc;
@@ -173,6 +175,24 @@
             margin-left: 15px;
             font-size: 0.9em;
             font-style: italic;
+        }
+
+        .segment-fields-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            /* Two equal columns */
+            gap: 5px 15px;
+            /* Row gap, Column gap */
+            align-items: start;
+            /* Align items to the start of their cell */
+            margin-top: 10px;
+            /* Add some space above the grid */
+        }
+
+        /* Minor adjustment for checkbox labels in grid */
+        .segment-fields-grid label input[type="checkbox"] {
+            vertical-align: middle;
+            /* Align checkbox better with text */
         }
     </style>
 </head>
@@ -425,6 +445,10 @@
             fieldset.appendChild(indexInput);
 
 
+            // --- Create a container for the fields grid ---
+            const fieldsGrid = document.createElement('div');
+            fieldsGrid.className = 'segment-fields-grid';
+
             // --- Program Name ---
             const programLabel = document.createElement('label');
             programLabel.textContent = 'Program Name (e.g., r5min): ';
@@ -436,7 +460,7 @@
             programInput.pattern = ".*\d+min$"; // Basic validation for ending with Xmin
             programInput.title = "Program name must end with digits followed by 'min' (e.g., r5min, prog10min)";
             programLabel.appendChild(programInput);
-            fieldset.appendChild(programLabel);
+            fieldsGrid.appendChild(programLabel);
 
             // --- LED Count ---
             const ledLabel = document.createElement('label');
@@ -448,7 +472,7 @@
             ledInput.min = 1;
             ledInput.required = true;
             ledLabel.appendChild(ledInput);
-            fieldset.appendChild(ledLabel);
+            fieldsGrid.appendChild(ledLabel);
 
             // --- Latitude ---
             const latLabel = document.createElement('label');
@@ -460,7 +484,7 @@
             latInput.step = '0.001';
             latInput.required = true;
             latLabel.appendChild(latInput);
-            fieldset.appendChild(latLabel);
+            fieldsGrid.appendChild(latLabel);
 
             // --- Longitude ---
             const lonLabel = document.createElement('label');
@@ -472,7 +496,7 @@
             lonInput.step = '0.001';
             lonInput.required = true;
             lonLabel.appendChild(lonInput);
-            fieldset.appendChild(lonLabel);
+            fieldsGrid.appendChild(lonLabel);
 
             // --- Reversed Checkbox ---
             const reversedLabel = document.createElement('label');
@@ -483,7 +507,7 @@
             reversedInput.checked = segmentData.reversed || false;
             reversedLabel.appendChild(reversedInput); // Checkbox first
             reversedLabel.appendChild(document.createTextNode(' Reversed')); // Then text
-            fieldset.appendChild(reversedLabel);
+            fieldsGrid.appendChild(reversedLabel);
 
             // --- Update Coords Checkbox ---
             const updateCoordsLabel = document.createElement('label');
@@ -494,11 +518,14 @@
             // Check by default only for the very first segment added, or if it's the only one from URL
             // updateCoordsInput.checked = segmentData.index === 0; // Simplest: check first one
             // Or check none by default?
-            updateCoordsInput.checked = false; // Start unchecked
+            updateCoordsInput.checked = true; // Start checked by default
 
             updateCoordsLabel.appendChild(updateCoordsInput);
             updateCoordsLabel.appendChild(document.createTextNode(' Update on map click'));
-            fieldset.appendChild(updateCoordsLabel);
+            fieldsGrid.appendChild(updateCoordsLabel);
+
+            // --- Append the grid container to the fieldset ---
+            fieldset.appendChild(fieldsGrid);
 
             return fieldset;
         }
