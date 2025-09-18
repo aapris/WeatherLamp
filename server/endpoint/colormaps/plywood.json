@@ -1,6 +1,6 @@
 {
   "CLEARSKY": [ 0, 26, 192 ],
-  "PARTLYCLOUDY": [ 83, 115, 192 ],
+  "PARTLYCLOUDY": [ 53, 83, 192 ],
   "CLOUDY": [ 111, 152, 192 ],
   "LIGHTRAIN_LT50": [ 111, 152, 192 ],
   "LIGHTRAIN": [ 136, 192, 106 ],
