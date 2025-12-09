@@ -1,4 +1,5 @@
 contextily
+httpx
 pyproj
 rasterio
 

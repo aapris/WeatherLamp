@@ -5,12 +5,13 @@ Output directory structure:
   output/
     2025-12-07/
       geotiff/
-        radar_suomi_rr_eureffin_20251207T100000Z.geotiff
+        radar_suomi_rr_eureffin_20251207T100000Z.geotiff[.gz]
       raw-png/
         radar_raw_20251207_100000.png
 """
 
 import argparse
+import gzip
 import logging
 import time
 import xml.etree.ElementTree as ET
@@ -31,6 +32,7 @@ def get_args():
     parser.add_argument("--duration", type=int, default=60, help="Duration in minutes")
     parser.add_argument("--layer", type=str, default="rr", help="Radar layer (rr, dbz)")
     parser.add_argument("--output-dir", type=str, default="output", help="Output base directory")
+    parser.add_argument("--gzip-geotiff", type=bool, default=True, help="Gzip GeoTIFF file (default: True)")
     parser.add_argument("--log", type=str, default="INFO", help="Logging level (ERROR, DEBUG, INFO)")
     args = parser.parse_args()
 
@@ -132,7 +134,7 @@ def fetch_radar_urls(start_time, end_time, layer="rr"):
     return sorted(urls)
 
 
-def download_radar(url, geotiff_dir: Path, raw_png_dir: Path, timestamp: datetime):
+def download_radar(url, geotiff_dir: Path, raw_png_dir: Path, timestamp: datetime, gzip_geotiff: bool = True):
     """Download GeoTIFF and save both original and raw PNG."""
     response = httpx.get(url, timeout=30)
     response.raise_for_status()
@@ -141,8 +143,13 @@ def download_radar(url, geotiff_dir: Path, raw_png_dir: Path, timestamp: datetim
     geotiff_filename = get_geotiff_filename_from_url(url)
     if geotiff_filename:
         geotiff_path = geotiff_dir / geotiff_filename
-        with open(geotiff_path, "wb") as f:
-            f.write(response.content)
+        if gzip_geotiff:
+            gz_path = geotiff_path.with_suffix(geotiff_path.suffix + ".gz")
+            with gzip.open(gz_path, "wb") as f:
+                f.write(response.content)
+        else:
+            with open(geotiff_path, "wb") as f:
+                f.write(response.content)
         logging.info(f"  Saved GeoTIFF: {geotiff_path}")
     else:
         logging.warning(f"Could not get filename from URL: {url}")
@@ -205,7 +212,7 @@ def main():
 
         try:
             geotiff_dir, raw_png_dir = dir_cache[timestamp.date()]
-            download_radar(url, geotiff_dir, raw_png_dir, timestamp)
+            download_radar(url, geotiff_dir, raw_png_dir, timestamp, gzip_geotiff=args.gzip_geotiff)
             downloaded += 1
         except Exception as e:
             logging.error(f"  Error: {e}")
