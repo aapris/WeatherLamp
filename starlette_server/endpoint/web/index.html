@@ -722,7 +722,7 @@
             // A more robust way would be if the backend returned the index with the data.
             // For now, rely on order.
             segments.forEach((segment, segmentIndex) => {
-                const segmentData = processedData[segmentIndex]; // Get data for this segment
+                const segmentDataWrapper = processedData[segmentIndex]; // Get data wrapper for this segment
 
                 const tableContainer = document.createElement('div');
                 const tableTitle = document.createElement('h3');
@@ -730,8 +730,19 @@
                 tableTitle.textContent = `Segment ${segment.index + 1} (Lat: ${segment.lat}, Lon: ${segment.lon})`;
                 tableContainer.appendChild(tableTitle);
 
+                // Extract actual data from the wrapper object (new format only)
+                const segmentData = segmentDataWrapper?.data || null;
+                const dataStatus = segmentDataWrapper?.data_status || 'unknown';
 
-                if (!segmentData || segmentData.length === 0) {
+                // Show data status indicator
+                const statusIndicator = document.createElement('p');
+                statusIndicator.textContent = `Data status: ${dataStatus}`;
+                statusIndicator.style.fontStyle = 'italic';
+                statusIndicator.style.fontSize = '0.9em';
+                statusIndicator.style.color = dataStatus === 'fresh' ? 'green' : 'orange';
+                tableContainer.appendChild(statusIndicator);
+
+                if (!segmentData || !Array.isArray(segmentData) || segmentData.length === 0) {
                     tableContainer.innerHTML += '<p>No forecast data available for this segment.</p>';
                     tablesContent.appendChild(tableContainer);
                     return; // Skip table creation for this segment

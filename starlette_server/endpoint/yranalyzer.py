@@ -208,16 +208,22 @@ def _parse_forecast_6h_entry(t: dict, pers: dict, timestamps: list, cast: str):
         add_to_dict(pers, "wind_gust", did.get("wind_speed_of_gust"))
 
 
-def _parse_yr_timeseries_to_df(yrdata: dict, cast: str) -> pd.DataFrame:
+def _parse_yr_timeseries_to_df(yrdata: dict | None, cast: str) -> pd.DataFrame:
     """
     Parses YR timeseries data into a Pandas DataFrame without resampling or filtering.
     For forecast data, uses next_1_hours when available, and expands next_6_hours data
     to hourly intervals when next_1_hours is not available.
 
-    :param yrdata: Raw timeseries data from YR API.
+    Returns an empty DataFrame if yrdata is None (defense-in-depth for API failures).
+
+    :param yrdata: Raw timeseries data from YR API, or None.
     :param cast: Type of forecast ('now' or 'fore').
     :return: DataFrame containing the parsed timeseries data.
     """
+    if yrdata is None:
+        logging.warning(f"Received None yrdata for cast '{cast}'. Returning empty DataFrame.")
+        return pd.DataFrame().rename_axis("time")
+
     timeseries = yrdata["properties"]["timeseries"]
     timestamps = []
     pers = {}
@@ -265,7 +271,7 @@ def yr_precipitation_to_df(yrdata: dict, cast: str) -> pd.DataFrame:
 
 
 def create_combined_forecast(
-    nowcast: dict | None, forecast: dict, slot_minutes: int, slot_count: int, now=None
+    nowcast: dict | None, forecast: dict | None, slot_minutes: int, slot_count: int, now=None
 ) -> pd.DataFrame:
     """
     Fetches nowcast and forecast data, resamples and filters them to the specified slots,
@@ -274,8 +280,11 @@ def create_combined_forecast(
     nowcast may be None, if original coordinates are not in YR coverage (yrapiclient.NOWCAST_COVERAGE_WKT),
     in which case a mock nowcast DataFrame is created.
 
+    forecast may be None if the API is down and no cached data is available,
+    in which case an empty placeholder DataFrame is created.
+
     :param nowcast: Raw nowcast data from YR API (or None).
-    :param forecast: Raw forecast data from YR API.
+    :param forecast: Raw forecast data from YR API (or None).
     :param slot_minutes: Length of each time slot in minutes.
     :param slot_count: Number of time slots to include.
     :param now: The reference time for calculating slots (defaults to current time).

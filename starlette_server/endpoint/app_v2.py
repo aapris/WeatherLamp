@@ -1,3 +1,4 @@
+import dataclasses
 import datetime
 import io
 import json
@@ -24,6 +25,7 @@ from starlette.routing import Route
 
 import yranalyzer
 import yrapiclient
+from yrapiclient import CacheResult
 
 # TODO: check handler, perhaps not wsgi?
 dictConfig(
@@ -60,6 +62,30 @@ if sentry_dsn and sentry_dsn.startswith("https"):
 MAX_FORECAST_DURATION_HOURS = 200
 SEGMENT_PARTS = 6
 COLORMAPS = OrderedDict()
+
+# Stale/error visual indicator thresholds and colors
+STALE_WARNING_THRESHOLD_S: int = 30 * 60  # 30 min → last LED colored as warning
+ERROR_THRESHOLD_S: int = 3 * 60 * 60  # 3h → full error pattern
+STALE_INDICATOR_COLOR: list[int] = [255, 0, 128]  # Hot pink (not in any colormap)
+STALE_INDICATOR_HEX: str = "ff0080"
+ERROR_PATTERN_COLORS: list[list[int]] = [[255, 0, 128], [0, 0, 0]]  # Alternating hot pink / off
+
+
+@dataclasses.dataclass
+class ForecastResult:
+    """Result of a forecast fetch with metadata about data freshness.
+
+    Args:
+        df: DataFrame with combined forecast data.
+        max_cache_age_seconds: Worst-case staleness across nowcast + forecast sources. None if no cache was involved.
+        has_data: False only if forecast source is "none" (total failure).
+        data_status: One of "fresh", "stale", or "error".
+    """
+
+    df: pd.DataFrame
+    max_cache_age_seconds: float | None
+    has_data: bool
+    data_status: str  # "fresh", "stale", "error"
 
 
 class RGBColor(BaseModel):
@@ -286,39 +312,57 @@ def validate_args_v2(request: Request) -> tuple[str, str, bool, bool, list[dict]
 
 async def create_forecast(
     lat: float, lon: float, slot_minutes: int, slot_count: int, dev: bool = False
-) -> pd.DataFrame:
+) -> ForecastResult:
     """
     Request YR nowcast and forecast from cache or API and create single DataFrame from the data.
 
+    Returns a ForecastResult containing the DataFrame and metadata about data freshness,
+    enabling the caller to apply stale/error visual indicators.
+
     :param lat: latitude
     :param lon: longitude
-    :param slot_minutes:
-    :param slot_count:
+    :param slot_minutes: time slot duration in minutes
+    :param slot_count: number of time slots
     :param dev: use local sample response data instead of remote API
-    :return: DataFrame with precipitation forecast for next slot_count of slot_minutes 16
+    :return: ForecastResult with DataFrame and freshness metadata
     """
-    nowcast = await yrapiclient.get_nowcast(lat, lon, dev)
-    forecast = await yrapiclient.get_locationforecast(lat, lon, dev)
-    df = yranalyzer.create_combined_forecast(nowcast, forecast, slot_minutes, slot_count)
-    # TODO: append missing rows instead of raising exception
+    nowcast_result: CacheResult = await yrapiclient.get_nowcast(lat, lon, dev)
+    forecast_result: CacheResult = await yrapiclient.get_locationforecast(lat, lon, dev)
+
+    # Determine worst-case cache age across both sources
+    ages = [r.cache_age_seconds for r in (nowcast_result, forecast_result) if r.cache_age_seconds is not None]
+    max_cache_age = max(ages) if ages else None
+
+    # has_data is False only when forecast completely failed (nowcast alone isn't enough)
+    has_data = forecast_result.source != "none"
+
+    # Determine data status
+    if not has_data:
+        data_status = "error"
+    elif max_cache_age is not None and max_cache_age > STALE_WARNING_THRESHOLD_S:
+        data_status = "stale"
+    else:
+        data_status = "fresh"
+
+    df = yranalyzer.create_combined_forecast(nowcast_result.data, forecast_result.data, slot_minutes, slot_count)
+
     if len(df.index) != slot_count:
         logging.warning(f"Expected {slot_count} slots, but got {len(df.index)} for {lat},{lon}. Padding/truncating.")
-        # Simple padding/truncating logic:
         if len(df.index) < slot_count:
-            # Pad with last row if needed (or create default rows)
-            last_row = df.iloc[[-1]] if not df.empty else None  # Handle empty DataFrame
+            last_row = df.iloc[[-1]] if not df.empty else None
             missing_rows = slot_count - len(df.index)
             if last_row is not None:
                 padding_df = pd.concat([last_row] * missing_rows, ignore_index=True)
-                # Adjust index if necessary, or let concat handle it if appropriate
                 df = pd.concat([df, padding_df], ignore_index=True)
-            # TODO: Consider a more sophisticated padding strategy if needed
         else:
-            # Truncate if too long
             df = df.iloc[:slot_count]
 
-    # assert len(df.index) == slot_count # Removed assert
-    return df
+    return ForecastResult(
+        df=df,
+        max_cache_age_seconds=max_cache_age,
+        has_data=has_data,
+        data_status=data_status,
+    )
 
 
 async def create_forecast_df(lat: float, lon: float, dev: bool = False) -> pd.DataFrame:
@@ -328,19 +372,51 @@ async def create_forecast_df(lat: float, lon: float, dev: bool = False) -> pd.Da
     :param lat: latitude
     :param lon: longitude
     :param dev: use local sample response data instead of remote API
-    :return: DataFrame with precipitation forecast for next slot_count of slot_minutes 16
+    :return: DataFrame with precipitation forecast
     """
-    nowcast = await yrapiclient.get_nowcast(lat, lon, dev)
-    forecast = await yrapiclient.get_locationforecast(lat, lon, dev)
-    df = yranalyzer.create_combined_forecast(nowcast, forecast)
+    nowcast_result: CacheResult = await yrapiclient.get_nowcast(lat, lon, dev)
+    forecast_result: CacheResult = await yrapiclient.get_locationforecast(lat, lon, dev)
+    df = yranalyzer.create_combined_forecast(nowcast_result.data, forecast_result.data)
     return df
+
+
+def _build_error_pattern(led_count: int) -> list[dict[str, Any]]:
+    """Build an alternating hot pink / off error pattern for the entire segment.
+
+    Args:
+        led_count: Number of LEDs in the segment.
+
+    Returns:
+        List of LED slot dictionaries with alternating error colors.
+    """
+    times = []
+    for idx in range(led_count):
+        color = ERROR_PATTERN_COLORS[idx % len(ERROR_PATTERN_COLORS)]
+        hex_color = f"{color[0]:02x}{color[1]:02x}{color[2]:02x}"
+        times.append(
+            {
+                "time": None,
+                "yr_symbol": None,
+                "wl_symbol": "error",
+                "prec_nowcast": None,
+                "prec_forecast": None,
+                "precipitation": None,
+                "prob_of_prec": None,
+                "wind_gust": None,
+                "rgb": color,
+                "hex": hex_color,
+            }
+        )
+    return times
 
 
 async def _get_segment_data(
     lat: float, lon: float, slot_minutes: int, slot_count: int, colormap_name: str, dev: bool = False
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], str]:
     """
     Fetches and processes weather forecast data for a single segment.
+
+    Returns the LED data list and a data_status string ("fresh", "stale", "error").
 
     :param lat: latitude
     :param lon: longitude
@@ -348,36 +424,41 @@ async def _get_segment_data(
     :param slot_count: how many slots will be returned
     :param colormap_name: pre-defined color map name
     :param dev: use local sample response data instead of remote API
-    :return: List of dictionaries, each representing a time slot's data.
+    :return: Tuple of (LED data list, data_status string).
     """
-    df = await create_forecast(lat, lon, slot_minutes, slot_count, dev)
+    result = await create_forecast(lat, lon, slot_minutes, slot_count, dev)
+    df = result.df
+
+    # No data or data too old → full error pattern
+    if not result.has_data or (
+        result.max_cache_age_seconds is not None and result.max_cache_age_seconds > ERROR_THRESHOLD_S
+    ):
+        logging.warning(
+            f"Error condition for {lat},{lon}: has_data={result.has_data}, "
+            f"max_age={result.max_cache_age_seconds}s. Returning error pattern."
+        )
+        return _build_error_pattern(slot_count), "error"
+
     times = []
 
     if colormap_name in COLORMAPS:
         colormap = COLORMAPS[colormap_name]
     else:
-        # Get the first colormap as default if the requested one doesn't exist
         first_colormap_name = next(iter(COLORMAPS.keys()))
         colormap = COLORMAPS[first_colormap_name]
         logging.warning(f"Colormap '{colormap_name}' not found, using default '{first_colormap_name}'.")
-    print("df", df)
+
+    logging.debug(f"DataFrame for segment {lat},{lon}:\n{df.to_string()}")
     df = yranalyzer.add_symbol_and_color(df, colormap)
     df = yranalyzer.add_day_night(df, lat, lon)
-    # Ensure display options don't affect data processing
-    # pd.set_option("display.max_rows", None, "display.max_columns", None, "display.width", 1000) # Not needed for processing
     logging.info(f"Processed DataFrame for segment {lat},{lon}:\n{df.to_string()}")
 
     for i in df.index:
-        # This handles potential missing indices if create_forecast padding failed or was complex
         if i not in df.index:
             logging.warning(f"Index {i} not found in DataFrame for {lat},{lon} after processing. Skipping.")
             continue
-        # Take always nowcast's precipitation if available, otherwise forecast's
-        precipitation = df.loc[i, "prec_now"] if pd.notnull(df.loc[i, "prec_now"]) else df.loc[i, "prec_fore"]
 
-        # Ensure color exists before accessing elements
-        # Use .get() with a default for color as well, in case the column is missing entirely
-        color_data = df.get("color", [0, 0, 0])[i]  # Access the value at index i
+        color_data = df.get("color", [0, 0, 0])[i]
         if isinstance(color_data, list) and len(color_data) == 3:
             hex_color = f"{color_data[0]:02x}{color_data[1]:02x}{color_data[2]:02x}"
             rgb_color = color_data
@@ -386,9 +467,8 @@ async def _get_segment_data(
                 f"Invalid or missing color data for index {i} at {lat},{lon}. Using default [0,0,0]. Data: {color_data}"
             )
             hex_color = "000000"
-            rgb_color = [0, 0, 0]  # Default to black
+            rgb_color = [0, 0, 0]
 
-        # Use .get(column, None) to safely access potentially missing data
         yr_symbol = df.get("symbol", None)[i] if "symbol" in df.columns else None
         wl_symbol = df.get("wl_symbol", None)[i] if "wl_symbol" in df.columns else None
         prec_now = df.get("prec_now", None)[i] if "prec_now" in df.columns else None
@@ -396,24 +476,30 @@ async def _get_segment_data(
         prob_of_prec = df.get("prob_of_prec", None)[i] if "prob_of_prec" in df.columns else None
         wind_gust = df.get("wind_gust", None)[i] if "wind_gust" in df.columns else None
 
-        # Recalculate precipitation based on safely accessed values
         precipitation = prec_now if pd.notnull(prec_now) else prec_fore
 
         times.append(
             {
-                "time": str(df.index[df.index.get_loc(i)]),  # Use df.index to get the actual Timestamp
+                "time": str(df.index[df.index.get_loc(i)]),
                 "yr_symbol": yr_symbol,
                 "wl_symbol": wl_symbol,
                 "prec_nowcast": prec_now,
                 "prec_forecast": prec_fore,
-                "precipitation": precipitation,  # Combined precipitation field
+                "precipitation": precipitation,
                 "prob_of_prec": prob_of_prec,
                 "wind_gust": wind_gust,
                 "rgb": rgb_color,
                 "hex": hex_color,
             }
         )
-    return times
+
+    # Apply stale indicator: set last LED to hot pink if data is stale (before reversal)
+    if result.data_status == "stale" and times:
+        times[-1]["rgb"] = STALE_INDICATOR_COLOR
+        times[-1]["hex"] = STALE_INDICATOR_HEX
+        times[-1]["wl_symbol"] = "stale_indicator"
+
+    return times, result.data_status
 
 
 def _create_colormap_preview(colormap_name: str, led_count: int) -> list[dict[str, Any]]:
@@ -467,7 +553,7 @@ def _create_colormap_preview(colormap_name: str, led_count: int) -> list[dict[st
 
 async def _process_segments(
     segments_data: list[dict[str, Any]], colormap: str, dev: bool, cm_preview: bool = False
-) -> list[list[dict[str, Any]]]:
+) -> tuple[list[list[dict[str, Any]]], list[str]]:
     """
     Processes forecast data for all requested segments.
 
@@ -475,60 +561,34 @@ async def _process_segments(
     :param colormap: Name of the colormap to use.
     :param dev: Flag to use development data.
     :param cm_preview: Flag to return colormap preview instead of weather data.
-    :return: List of lists, where each inner list contains the processed time slot data for a segment.
+    :return: Tuple of (segment data lists, per-segment data_status strings).
     :raises Exception: Propagates exceptions from underlying calls like _get_segment_data.
     """
     output_segments_data = []
-    # TODO: Consider running segments concurrently using asyncio.gather
-    # tasks = []
-    # for segment in segments_data:
-    #     task = asyncio.create_task(_get_segment_data(
-    #         lat=segment["lat"],
-    #         lon=segment["lon"],
-    #         slot_minutes=segment["slot_minutes"],
-    #         slot_count=segment["led_count"],
-    #         colormap_name=colormap,
-    #         dev=dev,
-    #     ))
-    #     tasks.append(task)
-    # results = await asyncio.gather(*tasks, return_exceptions=True) # Handle potential errors in tasks
+    segment_statuses = []
 
-    # for i, result in enumerate(results):
-    #     if isinstance(result, Exception):
-    #         logging.error(f"Error processing segment {segments_data[i]}: {result}")
-    #         # Decide how to handle failed segments (e.g., skip, return error marker)
-    #         # For now, re-raising the first encountered exception
-    #         raise result # Or handle more gracefully
-    #     else:
-    #         segment_times = result
-    #         if segments_data[i]["reversed"]:
-    #             segment_times = segment_times[::-1]
-    #         output_segments_data.append(segment_times)
-
-    # Sequential processing (original logic):
     for segment in segments_data:
         logging.debug(f"Processing segment: {segment}")
         try:
             # Handle colormap preview mode
             if cm_preview:
                 segment_times = _create_colormap_preview(colormap, segment["led_count"])
-                # Reverse the segment if requested
                 if segment["reversed"]:
                     segment_times = segment_times[::-1]
                 output_segments_data.append(segment_times)
+                segment_statuses.append("fresh")
                 logging.debug(f"Generated colormap preview for segment index {segment['index']}")
-                continue  # Move to the next segment
+                continue
 
             # Handle "dark" segments directly
             if segment["program"] == "dark":
                 dark_segment_times = []
                 for _ in range(segment["led_count"]):
-                    # Create a dictionary representing a dark LED slot
                     dark_segment_times.append(
                         {
-                            "time": None,  # No specific timestamp needed
+                            "time": None,
                             "yr_symbol": None,
-                            "wl_symbol": "dark",  # Specific symbol for WLED state if needed
+                            "wl_symbol": "dark",
                             "prec_nowcast": None,
                             "prec_forecast": None,
                             "precipitation": None,
@@ -539,11 +599,12 @@ async def _process_segments(
                         }
                     )
                 output_segments_data.append(dark_segment_times)
+                segment_statuses.append("fresh")
                 logging.debug(f"Generated dark segment data for segment index {segment['index']}")
-                continue  # Move to the next segment
+                continue
 
             # Process normal segments by fetching weather data
-            segment_times = await _get_segment_data(
+            segment_times, data_status = await _get_segment_data(
                 lat=segment["lat"],
                 lon=segment["lon"],
                 slot_minutes=segment["slot_minutes"],
@@ -551,16 +612,16 @@ async def _process_segments(
                 colormap_name=colormap,
                 dev=dev,
             )
-            # Reverse the segment if requested (only for non-dark segments)
+            # Reverse the segment if requested (after stale indicator was applied to last LED)
             if segment["reversed"]:
                 segment_times = segment_times[::-1]
             output_segments_data.append(segment_times)
+            segment_statuses.append(data_status)
         except Exception as e:
             logging.exception(f"Error processing segment {segment}: {e}")
-            # Re-raise the exception to be caught by the main handler
             raise Exception(f"Failed to process segment data for {segment['lat']},{segment['lon']}") from e
 
-    return output_segments_data
+    return output_segments_data, segment_statuses
 
 
 def _format_html(processed_data: list[list[dict[str, Any]]]) -> str:
@@ -641,13 +702,24 @@ def _replace_nan_with_none(obj: Any, nan_found: list[bool]) -> Any:
         return obj
 
 
-def _format_json(processed_data: list[list[dict[str, Any]]]) -> str:
-    """Formats the processed segment data into a standard JSON string, replacing NaN with null."""
-    nan_found_tracker = [False]  # Use a list to make it mutable across calls
+def _format_json(processed_data: list[list[dict[str, Any]]], segment_statuses: list[str] | None = None) -> str:
+    """Formats the processed segment data into a standard JSON string, replacing NaN with null.
+
+    When segment_statuses is provided, wraps each segment with metadata including data_status.
+    """
+    nan_found_tracker = [False]
     data_without_nan = _replace_nan_with_none(processed_data, nan_found_tracker)
 
     if nan_found_tracker[0]:
         logging.debug("NaN values found and replaced with null in JSON output.")
+
+    if segment_statuses:
+        # Wrap segments with metadata
+        output = []
+        for i, segment_data in enumerate(data_without_nan):
+            status = segment_statuses[i] if i < len(segment_statuses) else "fresh"
+            output.append({"data_status": status, "data": segment_data})
+        return json.dumps(output)
 
     return json.dumps(data_without_nan)
 
@@ -699,10 +771,7 @@ async def v2(request: Request) -> Response:
         # Validation errors are specific client errors, log and re-raise
         logging.warning(f"Validation failed: {e.detail}")
         raise e  # Caught by http_exception_handler
-    # _ = 1 / 0 # POISTETTU TESTIVIRHE
-    # No try-except block here for _process_segments.
-    # Let exceptions propagate to the generic exception handler.
-    processed_segments_data = await _process_segments(segments_data, colormap, dev, cm_preview)
+    processed_segments_data, segment_statuses = await _process_segments(segments_data, colormap, dev, cm_preview)
     logging.debug(f"Processed data for {len(processed_segments_data)} segments.")
 
     # Format the data based on the requested format
@@ -710,7 +779,7 @@ async def v2(request: Request) -> Response:
         content = _format_html(processed_segments_data)
         return HTMLResponse(content)
     elif response_format == "json":
-        content = _format_json(processed_segments_data)
+        content = _format_json(processed_segments_data, segment_statuses)
         return Response(content, media_type="application/json")
     elif response_format == "json_wled":
         content = _format_json_wled(processed_segments_data)
@@ -894,6 +963,4 @@ if sentry_enabled:
     except Exception as e:
         logging.error(f"Failed to wrap app with Sentry middleware: {e}")
 
-print("Sentry enabled:", sentry_enabled, "Sentry DSN:", sentry_dsn)
-# Remove the old optional generic handler registration comment block if it exists
-# # app.add_exception_handler(Exception, generic_exception_handler) # Optional: Catch all other exceptions
+logging.info(f"Sentry enabled: {sentry_enabled}, Sentry DSN: {sentry_dsn}")
