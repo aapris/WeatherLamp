@@ -118,9 +118,101 @@ def get_start_and_end(slot_len: int, slot_count: int, now=None):
     return start_time, end_time
 
 
+def _extract_symbol_from_code(symbol_code: str) -> str:
+    """
+    Extracts the base symbol from a symbol code by removing _day/_night postfix.
+
+    :param symbol_code: Symbol code from YR API (e.g., 'clearsky_day').
+    :return: Base symbol without postfix (e.g., 'clearsky').
+    """
+    if symbol_code.find("_") >= 0:
+        symbol, _ = symbol_code.split("_")
+        return symbol
+    return symbol_code
+
+
+def _parse_nowcast_entry(t: dict, pers: dict, timestamps: list, cast: str):
+    """
+    Parses a single nowcast entry and adds it to the data structures.
+
+    :param t: Single timeseries entry from YR API.
+    :param pers: Dictionary to store parsed data.
+    :param timestamps: List to store timestamps.
+    :param cast: Type of forecast ('now').
+    """
+    did = t["data"]["instant"]["details"]
+    if "precipitation_rate" in did:
+        add_to_dict(pers, f"prec_{cast}", did["precipitation_rate"])
+    else:
+        logging.warning(f"Precipitation rate (radar data) is not available at {t['time']}: {did}")
+        add_to_dict(pers, f"prec_{cast}", None)
+    timestamps.append(datetime.datetime.fromisoformat(t["time"]))
+
+
+def _parse_forecast_1h_entry(t: dict, pers: dict, timestamps: list, cast: str):
+    """
+    Parses a single hourly forecast entry and adds it to the data structures.
+
+    :param t: Single timeseries entry from YR API.
+    :param pers: Dictionary to store parsed data.
+    :param timestamps: List to store timestamps.
+    :param cast: Type of forecast ('fore').
+    """
+    base_time = datetime.datetime.fromisoformat(t["time"])
+    d1h = t["data"]["next_1_hours"]
+    did = t["data"]["instant"]["details"]
+
+    # Precipitation
+    add_to_dict(pers, f"prec_{cast}", d1h["details"]["precipitation_amount"])
+    # probability_of_precipitation is not always present, at least outside of Scandinavia
+    add_to_dict(pers, "prob_of_prec", d1h["details"].get("probability_of_precipitation"))
+    # Weather symbol
+    symbol = _extract_symbol_from_code(d1h["summary"]["symbol_code"])
+    add_to_dict(pers, "symbol", symbol)
+    # Wind and other forecasts
+    add_to_dict(pers, "wind_speed", did["wind_speed"])
+    add_to_dict(pers, "wind_gust", did.get("wind_speed_of_gust"))
+    timestamps.append(base_time)
+
+
+def _parse_forecast_6h_entry(t: dict, pers: dict, timestamps: list, cast: str):
+    """
+    Parses a single 6-hour forecast entry and expands it to hourly intervals.
+
+    :param t: Single timeseries entry from YR API.
+    :param pers: Dictionary to store parsed data.
+    :param timestamps: List to store timestamps.
+    :param cast: Type of forecast ('fore').
+    """
+    base_time = datetime.datetime.fromisoformat(t["time"])
+    d6h = t["data"]["next_6_hours"]
+    did = t["data"]["instant"]["details"]
+
+    # Get 6-hour data and divide by 6 for hourly average
+    precip_6h = d6h["details"].get("precipitation_amount", 0.0)
+    precip_hourly = precip_6h / 6.0 if precip_6h is not None else 0.0
+
+    prob_of_prec_6h = d6h["details"].get("probability_of_precipitation")
+
+    # Weather symbol from 6-hour forecast
+    symbol = _extract_symbol_from_code(d6h["summary"]["symbol_code"])
+
+    # Create 6 hourly entries
+    for hour_offset in range(6):
+        hour_time = base_time + datetime.timedelta(hours=hour_offset)
+        timestamps.append(hour_time)
+        add_to_dict(pers, f"prec_{cast}", precip_hourly)
+        add_to_dict(pers, "prob_of_prec", prob_of_prec_6h)
+        add_to_dict(pers, "symbol", symbol)
+        add_to_dict(pers, "wind_speed", did.get("wind_speed"))
+        add_to_dict(pers, "wind_gust", did.get("wind_speed_of_gust"))
+
+
 def _parse_yr_timeseries_to_df(yrdata: dict, cast: str) -> pd.DataFrame:
     """
     Parses YR timeseries data into a Pandas DataFrame without resampling or filtering.
+    For forecast data, uses next_1_hours when available, and expands next_6_hours data
+    to hourly intervals when next_1_hours is not available.
 
     :param yrdata: Raw timeseries data from YR API.
     :param cast: Type of forecast ('now' or 'fore').
@@ -129,49 +221,29 @@ def _parse_yr_timeseries_to_df(yrdata: dict, cast: str) -> pd.DataFrame:
     timeseries = yrdata["properties"]["timeseries"]
     timestamps = []
     pers = {}
-    for t in timeseries:
-        if cast == "now":  # nowcast has only precipitation rate
-            did = t["data"]["instant"]["details"]
-            if "precipitation_rate" in did:  # radar data is available
-                add_to_dict(pers, f"prec_{cast}", did["precipitation_rate"])
-            else:
-                logging.warning(f"Precipitation rate (radar data) is not available at {t['time']}: {did}")
-                add_to_dict(pers, f"prec_{cast}", None)
-        elif cast == "fore":  # forecast has more data available
-            if "next_1_hours" not in t["data"]:
-                # Skip entries if next_1_hours is missing, could indicate end of relevant forecast
-                logging.debug(f"Missing 'next_1_hours' data at {t['time']}")
-                continue  # Skip this timestamp
-            d1h = t["data"]["next_1_hours"]
-            # Precipitation
-            add_to_dict(pers, f"prec_{cast}", d1h["details"]["precipitation_amount"])
-            # probability_of_precipitation is not always present, at least outside of Scandinavia
-            add_to_dict(pers, "prob_of_prec", d1h["details"].get("probability_of_precipitation"))
-            # Weather symbol
-            symbol_code = d1h["summary"]["symbol_code"]
-            if symbol_code.find("_") >= 0:  # Check for _day, _night postfix
-                symbol, _ = symbol_code.split("_")  # variant not used currently
-            else:
-                symbol = symbol_code
-            add_to_dict(pers, "symbol", symbol)
-            # Wind and other forecasts
-            did = t["data"]["instant"]["details"]
-            add_to_dict(pers, "wind_speed", did["wind_speed"])
-            add_to_dict(pers, "wind_gust", did.get("wind_speed_of_gust"))
 
-        timestamps.append(datetime.datetime.fromisoformat(t["time"]))
+    for t in timeseries:
+        if cast == "now":
+            _parse_nowcast_entry(t, pers, timestamps, cast)
+        elif cast == "fore":
+            if "next_1_hours" in t["data"]:
+                _parse_forecast_1h_entry(t, pers, timestamps, cast)
+            elif "next_6_hours" in t["data"]:
+                _parse_forecast_6h_entry(t, pers, timestamps, cast)
+            else:
+                logging.debug(f"Missing both 'next_1_hours' and 'next_6_hours' data at {t['time']}")
+                continue
 
     # Ensure all lists in pers have the same length as timestamps
-    # This handles cases where some data points might be skipped (like missing next_1_hours)
     expected_len = len(timestamps)
-    for key in list(pers.keys()):  # Iterate over a copy of keys
+    for key in list(pers.keys()):
         if len(pers[key]) != expected_len:
             logging.error(
                 f"Inconsistent data length for key '{key}' in cast '{cast}'. Expected {expected_len}, got {len(pers[key])}. Removing key."
             )
-            del pers[key]  # Remove inconsistent data
+            del pers[key]
 
-    if not pers:  # If no valid data was parsed
+    if not pers:
         logging.warning(f"No valid data parsed for cast '{cast}'. Returning empty DataFrame.")
         return pd.DataFrame(index=pd.to_datetime(timestamps)).rename_axis("time")
 
@@ -311,6 +383,48 @@ def add_day_night(df: pd.DataFrame, lat: float, lon: float):
     return df
 
 
+def _determine_nowcast_color_key(precipitation: float, symbol, rain_re) -> str | None:
+    """
+    Determines the color key based on nowcast precipitation data.
+
+    :param precipitation: Precipitation amount from nowcast.
+    :param symbol: Weather symbol (may be None).
+    :param rain_re: Compiled regex pattern for rain detection.
+    :return: Color key string or None.
+    """
+    # Check precipitation thresholds using a threshold list
+    thresholds = [(3.0, "VERYHEAVYRAIN"), (1.5, "HEAVYRAIN"), (0.5, "RAIN"), (0.0, "LIGHTRAIN")]
+    for threshold, key in thresholds:
+        if precipitation > threshold:
+            return key
+
+    # Check for zero precipitation - rain symbol takes precedence
+    if precipitation == 0.0 and symbol is not None:
+        if rain_re.findall(str(symbol)):
+            return "CLOUDY"
+        return symbolmap.get(symbol)
+
+    return None
+
+
+def _determine_forecast_color_key(symbol, prob_of_prec: float | None) -> str | None:
+    """
+    Determines the color key based on forecast symbol and probability.
+
+    :param symbol: Weather symbol from forecast (may be None).
+    :param prob_of_prec: Probability of precipitation (may be None).
+    :return: Color key string or None.
+    """
+    if symbol is None or symbol not in symbolmap:
+        return None
+
+    colors_key = symbolmap[symbol]
+    # Adjust for low probability light rain only if prob_of_prec is a valid number
+    if colors_key == "LIGHTRAIN" and isinstance(prob_of_prec, (int, float)) and prob_of_prec <= 50:
+        return "LIGHTRAIN_LT50"
+    return colors_key
+
+
 def add_symbol_and_color(df: pd.DataFrame, colormap: dict):
     """
     Color logic happens here. Use nowcast's precipitation, when it is available and
@@ -323,53 +437,20 @@ def add_symbol_and_color(df: pd.DataFrame, colormap: dict):
     symbols = []
     colors = []
     rain_re = re.compile(r"rain|sleet|snow", re.IGNORECASE)
+
     for i in df.index:
         # Take always nowcast's precipitation, it should be the most accurate
         if pd.notnull(df["prec_now"][i]):
             precipitation = df["prec_now"][i]
-            nowcast = True
-            prob_of_prec = None  # Not relevant for nowcast logic path
+            symbol = df["symbol"][i] if "symbol" in df.columns and pd.notnull(df["symbol"][i]) else None
+            colors_key = _determine_nowcast_color_key(precipitation, symbol, rain_re)
         else:
             precipitation = df["prec_fore"][i]
-            nowcast = False
-            # Safely get probability of precipitation
-            if "prob_of_prec" in df.columns and pd.notnull(df["prob_of_prec"][i]):
-                prob_of_prec = df["prob_of_prec"][i]
-            else:
-                prob_of_prec = None  # Default to None if column missing or value is NaN
-
-        # Determine colors_key based on nowcast or forecast data
-        colors_key = None  # Initialize colors_key
-        if nowcast:
-            if precipitation >= 3.0:
-                colors_key = "VERYHEAVYRAIN"
-            elif precipitation >= 1.5:
-                colors_key = "HEAVYRAIN"
-            elif precipitation >= 0.5:
-                colors_key = "RAIN"
-            elif precipitation > 0.0:
-                colors_key = "LIGHTRAIN"
-            elif (
-                precipitation == 0.0
-                and "symbol" in df.columns
-                and pd.notnull(df["symbol"][i])
-                and rain_re.findall(str(df["symbol"][i]))
-            ):
-                # Ensure symbol exists and is not null before regex check
-                colors_key = "CLOUDY"
-            elif "symbol" in df.columns and pd.notnull(df["symbol"][i]) and df["symbol"][i] in symbolmap:
-                # Ensure symbol exists, is not null and is in symbolmap
-                colors_key = symbolmap[df["symbol"][i]]
-            # If none of the above conditions match, colors_key remains None or default value
-
-        elif "symbol" in df.columns and pd.notnull(df["symbol"][i]) and df["symbol"][i] in symbolmap:
-            # Ensure symbol exists, is not null and is in symbolmap
-            symbol = df["symbol"][i]
-            colors_key = symbolmap[symbol]
-            # Adjust for low probability light rain only if prob_of_prec is a valid number
-            if colors_key == "LIGHTRAIN" and isinstance(prob_of_prec, (int, float)) and prob_of_prec <= 50:
-                colors_key = "LIGHTRAIN_LT50"
-            # If symbol is missing, null, or not in symbolmap, colors_key remains None or default value
+            prob_of_prec = (
+                df["prob_of_prec"][i] if "prob_of_prec" in df.columns and pd.notnull(df["prob_of_prec"][i]) else None
+            )
+            symbol = df["symbol"][i] if "symbol" in df.columns and pd.notnull(df["symbol"][i]) else None
+            colors_key = _determine_forecast_color_key(symbol, prob_of_prec)
 
         # Append symbol and color if colors_key was determined and exists in colormap
         if colors_key and colors_key in colormap:
@@ -380,9 +461,8 @@ def add_symbol_and_color(df: pd.DataFrame, colormap: dict):
             logging.warning(
                 f"Could not determine color for timestamp {i}. colors_key: {colors_key}. Appending default."
             )
-            symbols.append("UNKNOWN")  # Or some default symbol
-            # Try to get a default color or use a placeholder
-            default_color = colormap.get("UNKNOWN", colormap.get("CLOUDY", [0, 0, 0]))  # Example fallback
+            symbols.append("UNKNOWN")
+            default_color = colormap.get("UNKNOWN", colormap.get("CLOUDY", [0, 0, 0]))
             colors.append(default_color)
 
     df["wl_symbol"] = symbols

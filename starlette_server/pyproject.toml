@@ -1,28 +1,28 @@
 [project]
 name = "weatherlamp-server"
-version = "0.2.0"
+version = "0.3.0"
 description = "Server component for WeatherLamp project"
 authors = [
     {name = "Aapo Rista", email = "aapris@gmail.com"}
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
-    "astral~=3.2",
-    "httpx~=0.28.1",
-    "pandas~=2.2.3",
-    "pydantic~=2.10.4",
-    "python-dotenv~=1.1.0",
-    "sentry-sdk~=2.25.1",
-    "shapely~=2.0.1",
-    "starlette~=0.46.1",
-    "uvicorn~=0.34.0",
+    "astral>=3.2",
+    "httpx>=0.28.1",
+    "pandas>=3.0.0",
+    "pydantic>=2.12.5",
+    "python-dotenv>=1.2.1",
+    "sentry-sdk>=2.53.0",
+    "shapely>=2.1.2",
+    "starlette>=0.52.1",
+    "uvicorn>=0.40.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=6.2.0",
-    "pytest-cov>=2.12.0",
-    "ruff>=0.11.4",
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.15.1",
 ]
 
 [build-system]
@@ -31,7 +31,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.ruff]
 line-length = 119
-target-version = "py311"
+target-version = "py313"
 select = ["E", "F", "I", "N", "W", "B", "UP", "PL", "RUF"]
 ignore = []
 

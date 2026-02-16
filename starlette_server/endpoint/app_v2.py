@@ -57,7 +57,7 @@ if sentry_dsn and sentry_dsn.startswith("https"):
         logging.error(f"Failed to initialize Sentry: {e}")
 
 # TODO: these should be in some configuration file
-MAX_FORECAST_DURATION_HOURS = 48
+MAX_FORECAST_DURATION_HOURS = 200
 SEGMENT_PARTS = 6
 COLORMAPS = OrderedDict()
 
