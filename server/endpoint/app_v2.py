@@ -739,9 +739,15 @@ async def serve_ui(request: Request) -> Response:
     return FileResponse(HTML_FILE_PATH)
 
 
+async def health_check(request: Request) -> Response:
+    """Health check endpoint for load balancer and deployment automation."""
+    return JSONResponse({"status": "healthy", "timestamp": datetime.datetime.now(datetime.UTC).isoformat()})
+
+
 routes = [
     Route(path, endpoint=v2, methods=["GET", "POST", "HEAD"]),
     Route(path + "/ui", endpoint=serve_ui, methods=["GET"]),  # Add UI route
+    Route(path + "/health", endpoint=health_check, methods=["GET"]),  # Health check endpoint
 ]
 
 debug = True if os.getenv("DEBUG") else False
