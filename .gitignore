@@ -8,8 +8,14 @@ no_git.txt
 .vscode
 *.bin
 *.swp
+.stignore
+.env.prod
+NOTES.md
 
+*/endpoint/tests/
+*/endpoint/tmp/
 server/history
+fmi_radar
 
 
 
