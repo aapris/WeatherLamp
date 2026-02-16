@@ -1,6 +1,0 @@
-requests
-pandas
-python-dateutil
-pytz
-fastapi
-uvicorn
