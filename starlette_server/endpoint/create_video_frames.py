@@ -1,3 +1,7 @@
+"""
+time python endpoint/create_video_frames.py --lat 60.217 --lon 24.987 --interval 30 --targetdir /tmp/kuvat/ --yrdirs ~/WeatherLampAnimation/history/2021-1* --tbdirs  ~/WeatherLampAnimation/testbed/20211*  --log DEBUG 2>&1 |grep -v STREAM
+"""
+
 import argparse
 import datetime
 import json

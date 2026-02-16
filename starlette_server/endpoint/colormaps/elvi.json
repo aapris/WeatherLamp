@@ -1,0 +1,11 @@
+{
+    "CLEARSKY": [ 69, 94, 255 ], 
+    "PARTLYCLOUDY": [ 143, 167, 255 ],  
+    "CLOUDY": [ 255, 255, 255 ], 
+    "LIGHTRAIN_LT50": [ 255, 255, 255 ], 
+    "LIGHTRAIN": [ 255, 242, 145 ], 
+    "RAIN": [ 255, 193, 107 ], 
+    "HEAVYRAIN": [ 255, 97, 134 ], 
+    "VERYHEAVYRAIN": [ 255, 0, 221 ]
+}
+

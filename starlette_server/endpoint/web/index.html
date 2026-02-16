@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WeatherLamp V2 Configurator</title>
+    <!-- Add Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <style>
+        body {
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            margin: 0;
+            padding: 10px;
+            box-sizing: border-box;
+            /* Include padding in height calculation */
+        }
+
+        h1,
+        h2 {
+            text-align: center;
+        }
+
+        #main-container {
+            display: flex;
+            flex: 1;
+            /* Allow this container to grow */
+            gap: 15px;
+            overflow: hidden;
+            /* Prevent overall page scroll */
+        }
+
+        #controls {
+            width: 40%;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            overflow-y: auto;
+            /* Allow controls to scroll if needed */
+        }
+
+        #map-container {
+            width: 60%;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        #map {
+            flex: 1;
+            /* Allow map to take available space */
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+
+        #params-form {
+            border: 1px solid #ccc;
+            padding: 15px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+
+        #params-form fieldset {
+            margin-bottom: 15px;
+            padding: 10px;
+            border: 1px dashed #ddd;
+            border-radius: 3px;
+        }
+
+        #params-form legend {
+            font-weight: bold;
+        }
+
+        #params-form label {
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        #params-form input[type="number"],
+        #params-form input[type="text"] {
+            width: 100%;
+            /* Take full width of container */
+            box-sizing: border-box;
+            /* Include padding in width */
+            padding: 5px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+
+        #params-form input[type="checkbox"] {
+            margin-right: 5px;
+        }
+
+        #params-form .segment-controls {
+            text-align: right;
+        }
+
+        #params-form button.remove-segment {
+            background-color: #f44336;
+            color: white;
+            border: none;
+            padding: 3px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.8em;
+        }
+
+        .form-buttons {
+            margin-top: 15px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .form-buttons button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        #add-segment-btn {
+            background-color: #4CAF50;
+            /* Green */
+            color: white;
+        }
+
+        #update-view-btn {
+            background-color: #008CBA;
+            /* Blue */
+            color: white;
+        }
+
+        #data-tables {
+            margin-top: 15px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            overflow-y: auto;
+            /* Allow tables to scroll if needed */
+            flex-shrink: 0;
+            /* Prevent shrinking when map/controls grow */
+            /* Consider setting a max-height if needed */
+        }
+
+        #data-tables h2 {
+            margin-top: 0;
+        }
+
+        #data-tables table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+        }
+
+        #data-tables th,
+        #data-tables td {
+            border: 1px solid #ddd;
+            padding: 6px;
+            text-align: left;
+            font-size: 0.9em;
+        }
+
+        #data-tables th {
+            background-color: #f2f2f2;
+        }
+
+        .segment-coord-selector label {
+            display: inline-block;
+            /* Keep label and checkbox on same line */
+            margin-left: 15px;
+            font-size: 0.9em;
+            font-style: italic;
+        }
+
+        .segment-fields-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            /* Two equal columns */
+            gap: 5px 15px;
+            /* Row gap, Column gap */
+            align-items: start;
+            /* Align items to the start of their cell */
+            margin-top: 10px;
+            /* Add some space above the grid */
+        }
+
+        /* Minor adjustment for checkbox labels in grid */
+        .segment-fields-grid label input[type="checkbox"] {
+            vertical-align: middle;
+            /* Align checkbox better with text */
+        }
+    </style>
+</head>
+
+<body>
+    <h1>WeatherLamp V2 Configurator</h1>
+
+    <div id="main-container">
+        <div id="controls">
+            <h2>Configuration</h2>
+            <form id="params-form">
+                <!-- Segments will be added here dynamically -->
+                <div id="segments-container">
+                    <!-- Example Segment (will be replaced by JS) -->
+                    <fieldset data-segment-index="0">
+                        <legend>Segment 1</legend>
+                        <div class="segment-controls">
+                            <button type="button" class="remove-segment">Remove</button>
+                        </div>
+                        <input type="hidden" name="index" value="0">
+                        <label>Program Name (e.g., r5min): <input type="text" name="program" value="r5min"
+                                required></label>
+                        <label>LED Count: <input type="number" name="led_count" value="12" min="1" required></label>
+                        <label>Latitude: <input type="number" name="lat" value="60.167" step="0.001" required></label>
+                        <label>Longitude: <input type="number" name="lon" value="24.951" step="0.001" required></label>
+                        <label><input type="checkbox" name="reversed" value="1"> Reversed</label>
+                    </fieldset>
+                </div>
+
+                <div class="form-buttons">
+                    <button type="button" id="add-segment-btn">Add New Segment</button>
+                    <button type="button" id="update-view-btn">Update View</button>
+                </div>
+            </form>
+
+            <div id="data-tables">
+                <h2>Data Preview</h2>
+                <!-- Data tables will be rendered here -->
+                <div id="tables-content">
+                    <p>Click "Update View" to load data.</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="map-container">
+            <h2>Map Selector</h2>
+            <div id="map"></div>
+            <small>Click on the map to set Latitude/Longitude for the *last added* segment.</small>
+        </div>
+
+    </div>
+
+
+    <!-- Add Leaflet JavaScript -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <script>
+        // JavaScript logic will go here
+        console.log("HTML and CSS loaded. JS placeholder ready.");
+
+        // --- DOM Elements ---
+        const form = document.getElementById('params-form');
+        const segmentsContainer = document.getElementById('segments-container');
+        const addSegmentBtn = document.getElementById('add-segment-btn');
+        const updateViewBtn = document.getElementById('update-view-btn');
+        const tablesContent = document.getElementById('tables-content');
+        const mapElement = document.getElementById('map');
+
+        // --- Leaflet Map ---
+        let map = null;
+        let mapMarker = null; // To show selected location
+
+        // --- State ---
+        let segmentCounter = 0; // To assign unique indices to new segments
+
+        // --- Initial Setup ---
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log("DOM fully loaded and parsed.");
+            initializeMap();
+            parseUrlAndLoadInitialData();
+            setupEventListeners();
+        });
+
+        function initializeMap(centerCoords = [60.167, 24.951], zoomLevel = 10) {
+            console.log("Initializing map at:", centerCoords);
+            if (map) { // If map already exists, just update view
+                map.setView(centerCoords, zoomLevel);
+                return;
+            }
+            try {
+                map = L.map(mapElement).setView(centerCoords, zoomLevel);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                }).addTo(map);
+
+                // Add marker for visual feedback
+                mapMarker = L.marker(centerCoords, { draggable: true }).addTo(map);
+
+                // Map click event
+                map.on('click', (e) => {
+                    const lat = e.latlng.lat.toFixed(3);
+                    const lon = e.latlng.lng.toFixed(3);
+                    console.log(`Map clicked at: Lat ${lat}, Lon ${lon}`);
+                    updateSelectedSegmentCoords(lat, lon);
+                    if (mapMarker) {
+                        mapMarker.setLatLng(e.latlng);
+                    }
+                });
+
+                // Marker drag event
+                mapMarker.on('dragend', function (event) {
+                    var marker = event.target;
+                    var position = marker.getLatLng();
+                    const lat = position.lat.toFixed(3);
+                    const lon = position.lng.toFixed(3);
+                    console.log(`Marker dragged to: Lat ${lat}, Lon ${lon}`);
+                    updateSelectedSegmentCoords(lat, lon);
+                });
+
+            } catch (error) {
+                console.error("Error initializing Leaflet map:", error);
+                mapElement.innerHTML = "Error loading map. Please check console.";
+            }
+        }
+
+        function updateSelectedSegmentCoords(lat, lon) {
+            const segments = segmentsContainer.querySelectorAll('fieldset');
+            let updatedAny = false;
+            segments.forEach(segment => {
+                const updateCheckbox = segment.querySelector('input.update-coords-checkbox');
+                if (updateCheckbox && updateCheckbox.checked) {
+                    const latInput = segment.querySelector('input[name="lat"]');
+                    const lonInput = segment.querySelector('input[name="lon"]');
+                    if (latInput && lonInput) {
+                        latInput.value = lat;
+                        lonInput.value = lon;
+                        console.log(`Updated coordinates for segment index ${segment.dataset.segmentIndex}`);
+                        updatedAny = true;
+                    } else {
+                        console.warn(`Could not find lat/lon inputs in segment index ${segment.dataset.segmentIndex}`);
+                    }
+                } else {
+                    // Checkbox not checked or not found, do nothing for this segment
+                }
+            });
+
+            if (!updatedAny) {
+                console.warn("Map interaction occurred, but no segments were selected for coordinate update.");
+            }
+
+            // Move the map marker regardless of whether any segment was updated,
+            // as it reflects the clicked/dragged location.
+            if (mapMarker) {
+                mapMarker.setLatLng([lat, lon]);
+            }
+        }
+
+        function parseUrlAndLoadInitialData() {
+            console.log("Parsing URL and loading initial data...");
+            const urlParams = new URLSearchParams(window.location.search);
+            const sParam = urlParams.get('s');
+
+            let initialSegments = [];
+
+            if (sParam) {
+                console.log("Found 's' parameter:", sParam);
+                const segmentStrings = sParam.split(' '); // Assuming space separator
+                segmentStrings.forEach((segStr, index) => {
+                    const parts = segStr.split(',');
+                    if (parts.length === 6) {
+                        initialSegments.push({
+                            index: parseInt(parts[0], 10), // Use actual index from param
+                            program: parts[1],
+                            led_count: parseInt(parts[2], 10),
+                            reversed: parts[3] === '1',
+                            lat: parseFloat(parts[4]).toFixed(3),
+                            lon: parseFloat(parts[5]).toFixed(3)
+                        });
+                    } else {
+                        console.warn(`Invalid segment format in URL param: "${segStr}"`);
+                    }
+                });
+                // Adjust segmentCounter based on max index found
+                if (initialSegments.length > 0) {
+                    segmentCounter = Math.max(...initialSegments.map(s => s.index)) + 1;
+                } else {
+                    segmentCounter = 0; // Reset if parsing failed
+                }
+
+            }
+
+            if (initialSegments.length === 0) {
+                // Provide a default segment if 's' param is missing or invalid
+                console.log("No valid 's' parameter found, using default segment.");
+                initialSegments.push({
+                    index: 0, // Start with index 0
+                    program: 'r5min',
+                    led_count: 12,
+                    reversed: false,
+                    lat: 60.167,
+                    lon: 24.951
+                });
+                segmentCounter = 1; // Next segment will be index 1
+            }
+
+
+            renderSegments(initialSegments);
+
+            // Center map on the first segment's location
+            if (initialSegments.length > 0) {
+                const firstSeg = initialSegments[0];
+                const initialCoords = [firstSeg.lat, firstSeg.lon];
+                initializeMap(initialCoords); // Re-initialize or set view
+                if (mapMarker) {
+                    mapMarker.setLatLng(initialCoords); // Move marker too
+                }
+            }
+
+
+            // Fetch data based on the initial/parsed segments
+            fetchAndUpdateData();
+        }
+
+        function createSegmentElement(segmentData) {
+            const fieldset = document.createElement('fieldset');
+            fieldset.dataset.segmentIndex = segmentData.index; // Use the actual index
+
+            const legend = document.createElement('legend');
+            legend.textContent = `Segment ${segmentData.index + 1}`; // Display 1-based index to user
+            fieldset.appendChild(legend);
+
+            // --- Remove Button ---
+            const controlsDiv = document.createElement('div');
+            controlsDiv.className = 'segment-controls';
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'remove-segment';
+            removeBtn.textContent = 'Remove';
+            removeBtn.onclick = () => removeSegment(segmentData.index);
+            controlsDiv.appendChild(removeBtn);
+            fieldset.appendChild(controlsDiv);
+
+
+            // --- Hidden Index ---
+            const indexInput = document.createElement('input');
+            indexInput.type = 'hidden';
+            indexInput.name = 'index';
+            indexInput.value = segmentData.index;
+            fieldset.appendChild(indexInput);
+
+
+            // --- Create a container for the fields grid ---
+            const fieldsGrid = document.createElement('div');
+            fieldsGrid.className = 'segment-fields-grid';
+
+            // --- Program Name ---
+            const programLabel = document.createElement('label');
+            programLabel.textContent = 'Program Name (e.g., r5min): ';
+            const programInput = document.createElement('input');
+            programInput.type = 'text';
+            programInput.name = 'program';
+            programInput.value = segmentData.program || 'r5min';
+            programInput.required = true;
+            programInput.pattern = ".*\d+min$"; // Basic validation for ending with Xmin
+            programInput.title = "Program name must end with digits followed by 'min' (e.g., r5min, prog10min)";
+            programLabel.appendChild(programInput);
+            fieldsGrid.appendChild(programLabel);
+
+            // --- LED Count ---
+            const ledLabel = document.createElement('label');
+            ledLabel.textContent = 'LED Count: ';
+            const ledInput = document.createElement('input');
+            ledInput.type = 'number';
+            ledInput.name = 'led_count';
+            ledInput.value = segmentData.led_count || 12;
+            ledInput.min = 1;
+            ledInput.required = true;
+            ledLabel.appendChild(ledInput);
+            fieldsGrid.appendChild(ledLabel);
+
+            // --- Latitude ---
+            const latLabel = document.createElement('label');
+            latLabel.textContent = 'Latitude: ';
+            const latInput = document.createElement('input');
+            latInput.type = 'number';
+            latInput.name = 'lat';
+            latInput.value = segmentData.lat || 60.167;
+            latInput.step = '0.001';
+            latInput.required = true;
+            latLabel.appendChild(latInput);
+            fieldsGrid.appendChild(latLabel);
+
+            // --- Longitude ---
+            const lonLabel = document.createElement('label');
+            lonLabel.textContent = 'Longitude: ';
+            const lonInput = document.createElement('input');
+            lonInput.type = 'number';
+            lonInput.name = 'lon';
+            lonInput.value = segmentData.lon || 24.951;
+            lonInput.step = '0.001';
+            lonInput.required = true;
+            lonLabel.appendChild(lonInput);
+            fieldsGrid.appendChild(lonLabel);
+
+            // --- Reversed Checkbox ---
+            const reversedLabel = document.createElement('label');
+            const reversedInput = document.createElement('input');
+            reversedInput.type = 'checkbox';
+            reversedInput.name = 'reversed';
+            reversedInput.value = '1'; // The value when checked
+            reversedInput.checked = segmentData.reversed || false;
+            reversedLabel.appendChild(reversedInput); // Checkbox first
+            reversedLabel.appendChild(document.createTextNode(' Reversed')); // Then text
+            fieldsGrid.appendChild(reversedLabel);
+
+            // --- Update Coords Checkbox ---
+            const updateCoordsLabel = document.createElement('label');
+            updateCoordsLabel.className = 'segment-coord-selector';
+            const updateCoordsInput = document.createElement('input');
+            updateCoordsInput.type = 'checkbox';
+            updateCoordsInput.className = 'update-coords-checkbox';
+            // Check by default only for the very first segment added, or if it's the only one from URL
+            // updateCoordsInput.checked = segmentData.index === 0; // Simplest: check first one
+            // Or check none by default?
+            updateCoordsInput.checked = true; // Start checked by default
+
+            updateCoordsLabel.appendChild(updateCoordsInput);
+            updateCoordsLabel.appendChild(document.createTextNode(' Update on map click'));
+            fieldsGrid.appendChild(updateCoordsLabel);
+
+            // --- Append the grid container to the fieldset ---
+            fieldset.appendChild(fieldsGrid);
+
+            return fieldset;
+        }
+
+        function renderSegments(segmentsData) {
+            segmentsContainer.innerHTML = ''; // Clear existing segments
+            segmentsData.forEach(segData => {
+                const segmentElement = createSegmentElement(segData);
+                segmentsContainer.appendChild(segmentElement);
+            });
+            // Ensure segmentCounter is updated based on the highest index rendered
+            if (segmentsData.length > 0) {
+                segmentCounter = Math.max(...segmentsData.map(s => s.index)) + 1;
+            } else {
+                segmentCounter = 0; // Reset if no segments
+            }
+            console.log("Segments rendered. Next segment index:", segmentCounter);
+        }
+
+        function addSegment() {
+            console.log("Adding new segment with index:", segmentCounter);
+            // Get coords from the last segment or default/map center
+            let newLat = 60.167, newLon = 24.951;
+            const existingSegments = segmentsContainer.querySelectorAll('fieldset');
+            if (existingSegments.length > 0) {
+                const lastSegment = existingSegments[existingSegments.length - 1];
+                newLat = lastSegment.querySelector('input[name="lat"]').value || newLat;
+                newLon = lastSegment.querySelector('input[name="lon"]').value || newLon;
+            } else if (map) {
+                const center = map.getCenter();
+                newLat = center.lat.toFixed(3);
+                newLon = center.lng.toFixed(3);
+            }
+
+
+            const newSegmentData = {
+                index: segmentCounter, // Use the counter for the new segment's index
+                program: 'r5min',
+                led_count: 12,
+                reversed: false,
+                lat: newLat,
+                lon: newLon
+            };
+            const segmentElement = createSegmentElement(newSegmentData);
+            segmentsContainer.appendChild(segmentElement);
+
+            // Update map marker to the new segment's location for immediate feedback
+            if (mapMarker) {
+                mapMarker.setLatLng([newLat, newLon]);
+            }
+            if (map) {
+                map.setView([newLat, newLon]); // Center map on the new segment
+            }
+
+
+            segmentCounter++; // Increment for the next segment
+            console.log("Segment added. Next segment index:", segmentCounter);
+
+        }
+
+        function removeSegment(indexToRemove) {
+            console.log("Removing segment with index:", indexToRemove);
+            const segmentToRemove = segmentsContainer.querySelector(`fieldset[data-segment-index="${indexToRemove}"]`);
+            if (segmentToRemove) {
+                segmentToRemove.remove();
+                console.log("Segment removed from form.");
+                // Optional: Renumber subsequent segments? For simplicity, let's not renumber indices for now.
+                // The backend uses the index provided, so gaps are okay.
+                // However, if we always want contiguous indices (0, 1, 2...), we'd need to re-render.
+                // Current approach: Keep indices stable, backend handles potentially non-contiguous indices.
+                // Re-fetch data after removing? Yes, makes sense.
+                fetchAndUpdateData();
+            } else {
+                console.warn("Could not find segment with index", indexToRemove, "to remove.");
+            }
+        }
+
+
+        function setupEventListeners() {
+            console.log("Setting up event listeners.");
+            addSegmentBtn.addEventListener('click', addSegment);
+            updateViewBtn.addEventListener('click', fetchAndUpdateData);
+
+            // Add listener to form for input changes? Maybe not necessary if Update button is used.
+            // Could add auto-update on change, but might flood the backend. Button is safer.
+        }
+
+        function getSegmentsFromForm() {
+            const segments = [];
+            const fieldsets = segmentsContainer.querySelectorAll('fieldset');
+            fieldsets.forEach(fieldset => {
+                const index = parseInt(fieldset.querySelector('input[name="index"]').value, 10);
+                const program = fieldset.querySelector('input[name="program"]').value;
+                const led_count = parseInt(fieldset.querySelector('input[name="led_count"]').value, 10);
+                const lat = parseFloat(fieldset.querySelector('input[name="lat"]').value).toFixed(3);
+                const lon = parseFloat(fieldset.querySelector('input[name="lon"]').value).toFixed(3);
+                const reversed = fieldset.querySelector('input[name="reversed"]').checked; // true or false
+
+                // Validate basic required fields before adding
+                if (!isNaN(index) && program && !isNaN(led_count) && !isNaN(lat) && !isNaN(lon)) {
+                    segments.push({ index, program, led_count, lat, lon, reversed });
+                } else {
+                    console.warn("Skipping invalid segment data in form:", fieldset);
+                }
+            });
+            // Sort segments by index before generating 's' param to maintain order
+            segments.sort((a, b) => a.index - b.index);
+            console.log("Segments collected from form:", segments);
+            return segments;
+        }
+
+        function generateSParam(segments) {
+            const segmentStrings = segments.map(s =>
+                `${s.index},${s.program},${s.led_count},${s.reversed ? 1 : 0},${s.lat},${s.lon}`
+            );
+            return segmentStrings.join(' '); // Use space as separator
+        }
+
+
+        async function fetchAndUpdateData() {
+            console.log("Fetching and updating data...");
+            tablesContent.innerHTML = '<p>Loading data...</p>'; // Show loading indicator
+
+            const segments = getSegmentsFromForm();
+            if (segments.length === 0) {
+                tablesContent.innerHTML = '<p>No segments defined. Add a segment and click "Update View".</p>';
+                console.log("No segments in form, skipping fetch.");
+                return;
+            }
+
+            const sParam = generateSParam(segments);
+            if (!sParam) {
+                tablesContent.innerHTML = '<p>Could not generate segment data string. Check form values.</p>';
+                console.error("Failed to generate 's' parameter.");
+                return;
+            }
+
+            // Use the DECODED sParam for pushState for better readability in address bar
+            const displayUrl = `${window.location.pathname}?s=${sParam}`;
+            window.history.pushState({ path: displayUrl }, '', displayUrl);
+            console.log("Updated URL with new 's' param:", sParam);
+
+
+            // Use the ENCODED sParam for the actual API call
+            const apiUrl = `/v2?format=json&s=${encodeURIComponent(sParam)}`;
+            console.log("Fetching data from:", apiUrl);
+
+            try {
+                const response = await fetch(apiUrl);
+                if (!response.ok) {
+                    // Try to parse error JSON from backend
+                    let errorMsg = `HTTP error! Status: ${response.status}`;
+                    try {
+                        const errorData = await response.json();
+                        console.error("Backend error response:", errorData);
+                        errorMsg = `Error: ${errorData.message || 'Unknown error'} (Code: ${errorData.error_code || response.status})`;
+                        if (errorData.details) {
+                            errorMsg += ` Details: ${JSON.stringify(errorData.details)}`;
+                        }
+                    } catch (e) {
+                        console.error("Could not parse error JSON:", e);
+                        // Use the plain text if JSON parsing fails
+                        errorMsg = `HTTP error! Status: ${response.status}. Could not parse error details.`;
+                    }
+                    throw new Error(errorMsg);
+                }
+
+                const data = await response.json();
+                console.log("Received data:", data);
+
+                renderDataTables(data, segments); // Pass segments to map data back
+
+            } catch (error) {
+                console.error('Error fetching or processing data:', error);
+                tablesContent.innerHTML = `<p>Error loading data: ${error.message}</p><p>URL attempted: ${apiUrl}</p>`;
+            }
+        }
+
+        function renderDataTables(processedData, segments) {
+            tablesContent.innerHTML = ''; // Clear previous tables/messages
+
+            if (!Array.isArray(processedData) || processedData.length === 0) {
+                tablesContent.innerHTML = '<p>No data received from the server.</p>';
+                return;
+            }
+
+            if (processedData.length !== segments.length) {
+                console.warn(`Mismatch between requested segments (${segments.length}) and received data segments (${processedData.length}). Rendering what was received.`);
+                // Potentially show a warning to the user?
+            }
+
+
+            // Map segments to data using the order (assuming backend respects 's' param order)
+            // A more robust way would be if the backend returned the index with the data.
+            // For now, rely on order.
+            segments.forEach((segment, segmentIndex) => {
+                const segmentDataWrapper = processedData[segmentIndex]; // Get data wrapper for this segment
+
+                const tableContainer = document.createElement('div');
+                const tableTitle = document.createElement('h3');
+                // Use the segment index and maybe coords for the title
+                tableTitle.textContent = `Segment ${segment.index + 1} (Lat: ${segment.lat}, Lon: ${segment.lon})`;
+                tableContainer.appendChild(tableTitle);
+
+                // Extract actual data from the wrapper object (new format only)
+                const segmentData = segmentDataWrapper?.data || null;
+                const dataStatus = segmentDataWrapper?.data_status || 'unknown';
+
+                // Show data status indicator
+                const statusIndicator = document.createElement('p');
+                statusIndicator.textContent = `Data status: ${dataStatus}`;
+                statusIndicator.style.fontStyle = 'italic';
+                statusIndicator.style.fontSize = '0.9em';
+                statusIndicator.style.color = dataStatus === 'fresh' ? 'green' : 'orange';
+                tableContainer.appendChild(statusIndicator);
+
+                if (!segmentData || !Array.isArray(segmentData) || segmentData.length === 0) {
+                    tableContainer.innerHTML += '<p>No forecast data available for this segment.</p>';
+                    tablesContent.appendChild(tableContainer);
+                    return; // Skip table creation for this segment
+                }
+
+
+                const table = document.createElement('table');
+                const thead = table.createTHead();
+                const tbody = table.createTBody();
+                const headerRow = thead.insertRow();
+
+                // Define headers based on available keys in the first item
+                const headers = ["time", "wl_symbol", "precipitation", "rgb"]; // Explicitly define desired columns
+                headers.forEach(headerText => {
+                    const th = document.createElement('th');
+                    th.textContent = headerText;
+                    headerRow.appendChild(th);
+                });
+
+                // Populate table rows
+                segmentData.forEach(item => {
+                    const row = tbody.insertRow();
+                    const hexBgColor = item.hex || 'ffffff'; // Default to white if hex is missing
+                    row.style.backgroundColor = `#${hexBgColor}`; // Set background color
+
+                    // Simple check: If RGB is [0, 0, 0], use white text, otherwise black
+                    const rgbColor = item.rgb;
+                    let textColor = 'black'; // Default to black
+                    if (Array.isArray(rgbColor) && rgbColor[0] === 0 && rgbColor[1] === 0 && rgbColor[2] === 0) {
+                        textColor = 'white';
+                    }
+                    row.style.color = textColor;
+
+                    headers.forEach(header => {
+                        const cell = row.insertCell();
+                        let value = item[header];
+                        // Format specific fields if necessary
+                        if (header === 'time') {
+                            try {
+                                value = new Date(value).toLocaleString();
+                            } catch (e) { /* ignore format error */ }
+                        } else if (header === 'precipitation' && typeof value === 'number') {
+                            value = value.toFixed(2);
+                        } else if (header === 'rgb' && Array.isArray(value)) {
+                            value = `rgb(${value.join(',')})`;
+                        }
+                        // Handle null/undefined
+                        cell.textContent = value ?? 'N/A';
+                    });
+                });
+
+                tableContainer.appendChild(table);
+                tablesContent.appendChild(tableContainer);
+            });
+        }
+
+    </script>
+
+</body>
+
+</html>

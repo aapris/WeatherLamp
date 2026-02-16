@@ -5,13 +5,12 @@ import logging
 import os
 from collections import OrderedDict
 from logging.config import dictConfig
-from typing import Tuple, Union
 
 import pandas as pd
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, Response, StreamingResponse
+from starlette.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 import yranalyzer
@@ -21,14 +20,8 @@ import yrapiclient
 dictConfig(
     {
         "version": 1,
-        "formatters": {
-            "default": {
-                "format": "[%(asctime)s] %(levelname)s in %(module)s: %(message)s"
-            }
-        },
-        "handlers": {
-            "wsgi": {"class": "logging.StreamHandler", "formatter": "default"}
-        },
+        "formatters": {"default": {"format": "[%(asctime)s] %(levelname)s in %(module)s: %(message)s"}},
+        "handlers": {"wsgi": {"class": "logging.StreamHandler", "formatter": "default"}},
         "root": {"level": os.getenv("LOG_LEVEL", "INFO"), "handlers": ["wsgi"]},
     }
 )
@@ -60,7 +53,7 @@ COLORMAPS["plywood"] = {
 }
 
 
-def validate_args(request: Request) -> Tuple[float, float, int, int, str, str, bool]:
+def validate_args(request: Request) -> tuple[float, float, int, int, str, str, bool]:
     """
     Validate query parameters.
 
@@ -76,7 +69,15 @@ def validate_args(request: Request) -> Tuple[float, float, int, int, str, str, b
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid lat/lon values")
     try:
-        slot_minutes = int(request.query_params.get("interval", 30))
+        buttoncount = int(request.query_params.get("buttoncount", 0)) % 4
+        if buttoncount == 0:
+            slot_minutes = int(request.query_params.get("interval", 30))
+        elif buttoncount == 1:
+            slot_minutes = 15
+        elif buttoncount == 2:
+            slot_minutes = 5
+        else:  # must be 3
+            slot_minutes = 60  # spot price
         slot_count = int(request.query_params.get("slots", 16))
         if slot_minutes / 60 * slot_count > 48:
             raise HTTPException(status_code=400, detail="Interval*slots > 48 hours")
@@ -85,8 +86,9 @@ def validate_args(request: Request) -> Tuple[float, float, int, int, str, str, b
     return lat, lon, slot_minutes, slot_count, colormap, response_format, dev
 
 
-async def create_forecast(lat: float, lon: float, slot_minutes: int, slot_count: int,
-                          dev: bool = False) -> pd.DataFrame:
+async def create_forecast(
+    lat: float, lon: float, slot_minutes: int, slot_count: int, dev: bool = False
+) -> pd.DataFrame:
     """
     Request YR nowcast and forecast from cache or API and create single DataFrame from the data.
 
@@ -106,11 +108,15 @@ async def create_forecast(lat: float, lon: float, slot_minutes: int, slot_count:
 
 
 async def create_output(
-        lat: float, lon: float, _format: str = "bin",
-        slot_minutes: int = 30, slot_count: int = 16,
-        colormap_name: str = "plain",
-        output: str = None,
-        dev: bool = False) -> Union[str, bytearray]:
+    lat: float,
+    lon: float,
+    format_: str = "bin",
+    slot_minutes: int = 30,
+    slot_count: int = 16,
+    colormap_name: str = "plain",
+    output: str = None,
+    dev: bool = False,
+) -> str | bytearray:
     """
     Create output in requested format.
 
@@ -119,7 +125,7 @@ async def create_output(
     :param slot_minutes: minutes for pandas resample function
     :param slot_count: how many slot_count will be returned
     :param colormap_name: pre-defined color map [plain or plywood]
-    :param _format: output format [html, json or bin]
+    :param format_: output format [html, json or bin]
     :param output: optional output file
     :param dev: use local sample response data instead of remote API
     :return: precipitation data in requested format
@@ -134,7 +140,7 @@ async def create_output(
     cnt = 0
     df = yranalyzer.add_symbol_and_color(df, colormap)
     df = yranalyzer.add_day_night(df, lat, lon)
-    pd.set_option("display.max_rows", None, "display.max_columns", None, 'display.width', 1000)
+    pd.set_option("display.max_rows", None, "display.max_columns", None, "display.width", 1000)
     logging.info("\n" + str(df))
 
     for i in df.index:
@@ -143,39 +149,49 @@ async def create_output(
             precipitation = df["prec_now"][i]
         else:
             precipitation = df["prec_fore"][i]
-            logging.debug("{} {} {} {} {} {} {}".format(
-                precipitation, df["prec_now"][i], df["prec_fore"][i], df["prob_of_prec"][i], df["symbol"][i],
-                df["wl_symbol"][i], df["color"][i])
+            logging.debug(
+                "{} {} {} {} {} {} {}".format(
+                    precipitation,
+                    df["prec_now"][i],
+                    df["prec_fore"][i],
+                    df["prob_of_prec"][i],
+                    df["symbol"][i],
+                    df["wl_symbol"][i],
+                    df["color"][i],
+                )
             )
         colors += df["color"][i] + [int(df["wind_gust"][i])]  # R, G, B, wind gust speed
-        times.append({
-            "time": str(i),
-            "wl_symbol": df["wl_symbol"][i],
-            "yr_symbol": df["symbol"][i],
-            "prec_nowcast": df["prec_now"][i],
-            "prec_forecast": df["prec_fore"][i],
-            "prob_of_prec": df["prob_of_prec"][i],
-            "wind_gust": df["wind_gust"][i],
-            "rgb": df["color"][i]
-        })
+        times.append(
+            {
+                "time": str(i),
+                "wl_symbol": df["wl_symbol"][i],
+                "yr_symbol": df["symbol"][i],
+                "prec_nowcast": df["prec_now"][i],
+                "prec_forecast": df["prec_fore"][i],
+                "prob_of_prec": df["prob_of_prec"][i],
+                "wind_gust": df["wind_gust"][i],
+                "rgb": df["color"][i],
+            }
+        )
         cnt += 1
     assert len(colors) == slot_count * 4
     arr = bytearray(colors)
     reverse = True  # TODO: add option to use reversed_arr
     if reverse:
         # Split list to a chunks of 4
-        split_arr = list([arr[i:i + 4] for i in range(0, len(arr), 4)])
+        split_arr = list([arr[i : i + 4] for i in range(0, len(arr), 4)])
         # Reverse chunks
         reversed_split_arr = list(reversed(split_arr))
         # Join chunks back to 1-dim array
-        arr = bytearray((itertools.chain.from_iterable(reversed_split_arr)))
+        arr = bytearray(itertools.chain.from_iterable(reversed_split_arr))
     if output is not None:
         with open(output, "wb") as f:
             f.write(arr)
-    if _format == "json":
+    if format_ == "json":
         return json.dumps(times, indent=2)
-    elif _format == "html":
-        html = ["""<html><head>
+    elif format_ == "html":
+        html = [
+            """<html><head>
         <style>
           body {
             margin: 0px;
@@ -187,22 +203,26 @@ async def create_output(
             padding: 0px;
           }
         </style>
-        </head><body><table class="container">\n""", """<tr>
+        </head><body><table class="container">\n""",
+            """<tr>
         <td>time</td>
         <td>yr_symbol</td>
         <td>wl_symbol</td>
         <td>prec</td>
         <td>gust</td>
-        </tr>"""]
+        </tr>""",
+        ]
         for t in times:
             t["formatted_color"] = "rgb({})".format(",".join([str(x) for x in t["rgb"]]))
-            html.append("""<tr style='background-color: {formatted_color}'>
+            html.append(
+                """<tr style='background-color: {formatted_color}'>
             <td>{time}</td>
             <td>{yr_symbol}</td>
             <td>{wl_symbol}</td>
             <td>{prec_nowcast}/{prec_forecast}</td>
             <td>{wind_gust}</td>
-            </tr>""".format(**t))
+            </tr>""".format(**t)
+            )
         html.append("</table></html>")
         return "\n".join(html)
     else:  # format == "bin":
@@ -216,9 +236,12 @@ async def v1(request: Request) -> Response:
     :param request: starlette.requests.Request
     :return: Response
     """
-    lat, lon, slot_minutes, slot_count, colormap, response_format, dev = validate_args(
-        request
-    )
+    # Temporary kludge to return spot price from file
+    mode = int(request.query_params.get("buttoncount", 0)) % 4
+    if mode == 3:
+        logging.info("Requested spot price")
+        return FileResponse(str(os.getenv("SAHKO_PATH")), media_type="application/octet-stream")
+    lat, lon, slot_minutes, slot_count, colormap, response_format, dev = validate_args(request)
     logging.debug(f"Requested {lat} {lon} {response_format}")
     x = await create_output(
         lat,
@@ -226,7 +249,7 @@ async def v1(request: Request) -> Response:
         slot_minutes=slot_minutes,
         slot_count=slot_count,
         colormap_name=colormap,
-        _format=response_format,
+        format_=response_format,
         dev=dev,
     )
     if response_format == "html":  # for debugging purposes
@@ -237,8 +260,10 @@ async def v1(request: Request) -> Response:
         return StreamingResponse(io.BytesIO(x), media_type="application/octet-stream")
 
 
+path = os.getenv("ENDPOINT_PATH", "/v1")
+
 routes = [
-    Route("/v1", endpoint=v1, methods=["GET", "POST", "HEAD"]),
+    Route(path, endpoint=v1, methods=["GET", "POST", "HEAD"]),
 ]
 
 debug = True if os.getenv("DEBUG") else False

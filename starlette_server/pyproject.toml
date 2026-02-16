@@ -1,0 +1,45 @@
+[project]
+name = "weatherlamp-server"
+version = "0.3.0"
+description = "Server component for WeatherLamp project"
+authors = [
+    {name = "Aapo Rista", email = "aapris@gmail.com"}
+]
+requires-python = ">=3.13"
+dependencies = [
+    "astral>=3.2",
+    "httpx>=0.28.1",
+    "pandas>=3.0.0",
+    "pydantic>=2.12.5",
+    "python-dotenv>=1.2.1",
+    "sentry-sdk>=2.53.0",
+    "shapely>=2.1.2",
+    "starlette>=0.52.1",
+    "uvicorn>=0.40.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.15.1",
+]
+
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 119
+target-version = "py313"
+select = ["E", "F", "I", "N", "W", "B", "UP", "PL", "RUF"]
+ignore = []
+
+[tool.ruff.isort]
+known-first-party = ["yranalyzer", "yrapiclient"] 
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest-asyncio>=0.24",
+]
