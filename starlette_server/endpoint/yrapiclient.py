@@ -1,8 +1,10 @@
 import argparse
+import asyncio
 import dataclasses
 import datetime
 import json
 import logging
+import os
 import pathlib
 
 import httpx
@@ -27,6 +29,13 @@ MAX_LAT = 90.0
 MIN_LON = -180.0
 MAX_LON = 180.0
 
+# Root directory for all persistent data (cache, history). Subdirectories are
+# created at startup. Override with DATA_DIR env var for Docker volume mounts.
+DATA_DIR: pathlib.Path = pathlib.Path(os.getenv("DATA_DIR", "data"))
+
+# When True, raw API responses are archived to DATA_DIR/history/ for debugging.
+SAVE_HISTORY: bool = os.getenv("SAVE_HISTORY", "0") == "1"
+
 # Coverage is taken from file
 # https://api.met.no/weatherapi/nowcast/2.0/coverage.zip
 # then simplified and shrunk using negative buffer:
@@ -41,6 +50,12 @@ NOWCAST_COVERAGE_WKT = """POLYGON ((
     27.45389690417179 53.30251807369419,
     2.547779705832076 53.30271492607023
 ))"""
+
+# Pre-parsed coverage polygon (avoids re-parsing on every request)
+NOWCAST_COVERAGE = wkt.loads(NOWCAST_COVERAGE_WKT)
+
+# Shared httpx.AsyncClient — initialized via app lifespan, None when not running as server
+http_client: httpx.AsyncClient | None = None
 
 
 @dataclasses.dataclass
@@ -77,6 +92,8 @@ def _is_valid_yr_response(data: dict) -> bool:
 def _get_cache_path(lat: float, lon: float, cast_type: str) -> pathlib.Path:
     """Build the cache file path for given coordinates and cast type.
 
+    The cache directory is expected to already exist (created at app startup).
+
     Args:
         lat: Latitude.
         lon: Longitude.
@@ -85,9 +102,90 @@ def _get_cache_path(lat: float, lon: float, cast_type: str) -> pathlib.Path:
     Returns:
         Path to the cache file.
     """
-    cachedir = pathlib.Path("cache")
-    cachedir.mkdir(parents=True, exist_ok=True)
-    return cachedir / f"yr-cache-{cast_type}.{lat}_{lon}.json"
+    return DATA_DIR / "cache" / f"yr-cache-{cast_type}.{lat}_{lon}.json"
+
+
+def _check_cache_file_age(path: pathlib.Path) -> tuple[bool, float | None]:
+    """Check if a cache file exists and return its age in seconds.
+
+    Args:
+        path: Path to the cache file.
+
+    Returns:
+        Tuple of (exists, age_seconds_or_None).
+    """
+    if not path.exists():
+        return False, None
+    mtime = datetime.datetime.fromtimestamp(path.stat().st_mtime)
+    now = datetime.datetime.now()
+    return True, (now - mtime).total_seconds()
+
+
+def _read_cache_file(path: pathlib.Path) -> dict | None:
+    """Read and parse a JSON cache file.
+
+    Args:
+        path: Path to the cache file.
+
+    Returns:
+        Parsed JSON dict, or None if the file doesn't exist or is invalid.
+    """
+    try:
+        with open(path) as f:
+            return json.loads(f.read())
+    except (OSError, json.JSONDecodeError) as e:
+        logging.warning(f"Failed to read cache file {path}: {e}")
+        return None
+
+
+def _write_cache_file(path: pathlib.Path, text: str) -> None:
+    """Write text content to a cache file.
+
+    Args:
+        path: Path to the cache file.
+        text: Content to write.
+    """
+    with open(path, "w") as f:
+        f.write(text)
+
+
+def _write_history_file(path: pathlib.Path, text: str) -> None:
+    """Create parent directory and write text content to a history file.
+
+    Args:
+        path: Path to the history file.
+        text: Content to write.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        with open(path, "w") as f:
+            f.write(text)
+
+
+def _read_dev_cache(cast_type: str) -> dict:
+    """Read dev sample cache file and adjust timestamps to current time.
+
+    Args:
+        cast_type: One of "nowcast" or "locationforecast".
+
+    Returns:
+        Parsed JSON dict with updated timestamps.
+    """
+    now = datetime.datetime.now(datetime.UTC)
+    if cast_type == "locationforecast":
+        delta = 60
+        ts = now.replace(minute=0, second=0, microsecond=0)
+    else:
+        delta = 5
+        ts = now.replace(minute=now.minute // 5 * 5, second=0, microsecond=0)
+    cachefile = pathlib.Path(f"tests/sample_data/yr-cache-{cast_type}.dev.json")
+    with open(cachefile) as f:
+        yrdata = json.loads(f.read())
+        for t in yrdata["properties"]["timeseries"]:
+            newtime = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+            ts = ts + datetime.timedelta(minutes=delta)
+            t["time"] = newtime
+    return yrdata
 
 
 async def check_cache(
@@ -108,35 +206,19 @@ async def check_cache(
         Tuple of (cache_path, data_if_fresh_or_None, age_seconds_or_None).
     """
     if dev:
-        now = datetime.datetime.now(datetime.UTC)
-        if cast_type == "locationforecast":
-            delta = 60
-            ts = now.replace(minute=0, second=0, microsecond=0)
-        else:
-            delta = 5
-            ts = now.replace(minute=now.minute // 5 * 5, second=0, microsecond=0)
         cachefile = pathlib.Path(f"yr-cache-{cast_type}.dev.json")
-        with open(cachefile) as f:
-            yrdata = json.loads(f.read())
-            for t in yrdata["properties"]["timeseries"]:
-                newtime = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
-                ts = ts + datetime.timedelta(minutes=delta)
-                t["time"] = newtime
+        yrdata = await asyncio.to_thread(_read_dev_cache, cast_type)
         return cachefile, yrdata, 0.0
 
     cachefile = _get_cache_path(lat, lon, cast_type)
 
-    if not cachefile.exists():
+    exists, age = await asyncio.to_thread(_check_cache_file_age, cachefile)
+    if not exists:
         return cachefile, None, None
-
-    mtime = datetime.datetime.fromtimestamp(cachefile.stat().st_mtime)
-    now = datetime.datetime.now()
-    age = (now - mtime).total_seconds()
 
     if age <= CACHE_TTL_SECONDS:
         logging.info(f"Using fresh cached data from {cachefile} (age: {age:.0f}s).")
-        with open(cachefile) as f:
-            yrdata = json.loads(f.read())
+        yrdata = await asyncio.to_thread(_read_cache_file, cachefile)
         return cachefile, yrdata, age
 
     # Stale cache — do NOT delete, return None for data so caller attempts API
@@ -192,18 +274,22 @@ async def get_yrdata(lat: float, lon: float, cast_type: str = "locationforecast"
 
     # Attempt API call
     parameters = f"lat={lat:.3f}&lon={lon:.3f}"
-    headers = {"User-Agent": USER_AGENT}
     url = API_URL.format(cast_type)
     full_url = f"{url}?{parameters}"
     logging.info(f"Requesting data from {full_url}")
 
     try:
-        async with httpx.AsyncClient() as client:
-            res = await client.get(full_url, headers=headers)
+        client = http_client or httpx.AsyncClient(
+            headers={"User-Agent": USER_AGENT},
+            timeout=httpx.Timeout(10.0),
+        )
+        res = await client.get(full_url)
+        if http_client is None:
+            await client.aclose()
     except RequestError as err:
         logging.critical(f"Network error requesting {full_url}: {err}")
         # Fall through to stale fallback
-        return _stale_or_none(cachefile, age)
+        return await _stale_or_none(cachefile, age)
 
     if res.status_code == HTTP_OK:
         logging.info("Got 200 OK")
@@ -211,43 +297,42 @@ async def get_yrdata(lat: float, lon: float, cast_type: str = "locationforecast"
         logging.warning("Got 203, read the docs")
     elif res.status_code == HTTP_UNPROCESSABLE_ENTITY:
         logging.warning("Got 422, data is not available!")
-        return _stale_or_none(cachefile, age)
+        return await _stale_or_none(cachefile, age)
     else:
         logging.warning(f"Got {res.status_code}!")
-        return _stale_or_none(cachefile, age)
+        return await _stale_or_none(cachefile, age)
 
     # Parse response
     try:
         yrdata = json.loads(res.text)
     except json.JSONDecodeError:
         logging.error(f"Invalid JSON from {full_url}")
-        return _stale_or_none(cachefile, age)
+        return await _stale_or_none(cachefile, age)
 
     # Validate structure
     if not _is_valid_yr_response(yrdata):
         logging.error(f"Invalid YR response structure from {full_url}")
-        return _stale_or_none(cachefile, age)
+        return await _stale_or_none(cachefile, age)
 
-    # Write to cache
+    # Write to cache; optionally archive to history when SAVE_HISTORY is enabled
     logging.info(f"Caching data to {cachefile}")
-    with open(cachefile, "w") as f:
-        f.write(res.text)
-
-    # Write to history
     now = datetime.datetime.now(datetime.UTC)
-    historydir = pathlib.Path("history") / now.strftime("%Y-%m-%d")
-    historydir.mkdir(parents=True, exist_ok=True)
-    ts = now.strftime("%Y%m%dT%H%M%SZ")
-    historyfile = historydir / f"yr-{cast_type}-{lat}_{lon}-{ts}.json"
-    if not historyfile.exists():
-        with open(historyfile, "w") as f:
-            f.write(res.text)
+
+    if SAVE_HISTORY:
+        ts = now.strftime("%Y%m%dT%H%M%SZ")
+        historyfile = DATA_DIR / "history" / now.strftime("%Y-%m-%d") / f"yr-{cast_type}-{lat}_{lon}-{ts}.json"
+        await asyncio.gather(
+            asyncio.to_thread(_write_cache_file, cachefile, res.text),
+            asyncio.to_thread(_write_history_file, historyfile, res.text),
+        )
+    else:
+        await asyncio.to_thread(_write_cache_file, cachefile, res.text)
 
     logging.debug(res.headers)
     return CacheResult(data=yrdata, cache_age_seconds=0, source="api")
 
 
-def _stale_or_none(cachefile: pathlib.Path, age: float | None) -> CacheResult:
+async def _stale_or_none(cachefile: pathlib.Path, age: float | None) -> CacheResult:
     """Try stale cache fallback, or return empty result.
 
     Args:
@@ -257,7 +342,7 @@ def _stale_or_none(cachefile: pathlib.Path, age: float | None) -> CacheResult:
     Returns:
         CacheResult with stale data or source="none".
     """
-    stale_data = _load_stale_cache(cachefile)
+    stale_data = await asyncio.to_thread(_load_stale_cache, cachefile)
     if stale_data is not None:
         logging.warning(f"Serving stale cache from {cachefile} (age: {age:.0f}s).")
         return CacheResult(data=stale_data, cache_age_seconds=age, source="cache_stale")
@@ -295,8 +380,7 @@ async def get_nowcast(lat: float, lon: float, dev: bool) -> CacheResult:
     Returns:
         CacheResult with nowcast data, or CacheResult(None, None, "none") if outside coverage.
     """
-    nowcast_coverage = wkt.loads(NOWCAST_COVERAGE_WKT)
-    if nowcast_coverage.contains(Point(lon, lat)):
+    if NOWCAST_COVERAGE.contains(Point(lon, lat)):
         return await get_yrdata(lat, lon, "nowcast", dev)
     return CacheResult(data=None, cache_age_seconds=None, source="none")
 

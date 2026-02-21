@@ -1,3 +1,4 @@
+import asyncio
 import dataclasses
 import datetime
 import io
@@ -8,10 +9,12 @@ import os
 import re
 import traceback
 from collections import OrderedDict
+from contextlib import asynccontextmanager
 from logging.config import dictConfig
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pandas as pd
 import sentry_sdk
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -25,7 +28,6 @@ from starlette.routing import Route
 
 import yranalyzer
 import yrapiclient
-from yrapiclient import CacheResult
 
 # TODO: check handler, perhaps not wsgi?
 dictConfig(
@@ -326,8 +328,10 @@ async def create_forecast(
     :param dev: use local sample response data instead of remote API
     :return: ForecastResult with DataFrame and freshness metadata
     """
-    nowcast_result: CacheResult = await yrapiclient.get_nowcast(lat, lon, dev)
-    forecast_result: CacheResult = await yrapiclient.get_locationforecast(lat, lon, dev)
+    nowcast_result, forecast_result = await asyncio.gather(
+        yrapiclient.get_nowcast(lat, lon, dev),
+        yrapiclient.get_locationforecast(lat, lon, dev),
+    )
 
     # Determine worst-case cache age across both sources
     ages = [r.cache_age_seconds for r in (nowcast_result, forecast_result) if r.cache_age_seconds is not None]
@@ -374,8 +378,10 @@ async def create_forecast_df(lat: float, lon: float, dev: bool = False) -> pd.Da
     :param dev: use local sample response data instead of remote API
     :return: DataFrame with precipitation forecast
     """
-    nowcast_result: CacheResult = await yrapiclient.get_nowcast(lat, lon, dev)
-    forecast_result: CacheResult = await yrapiclient.get_locationforecast(lat, lon, dev)
+    nowcast_result, forecast_result = await asyncio.gather(
+        yrapiclient.get_nowcast(lat, lon, dev),
+        yrapiclient.get_locationforecast(lat, lon, dev),
+    )
     df = yranalyzer.create_combined_forecast(nowcast_result.data, forecast_result.data)
     return df
 
@@ -557,6 +563,9 @@ async def _process_segments(
     """
     Processes forecast data for all requested segments.
 
+    Synchronous segments (dark, cm_preview) are resolved immediately.
+    Weather segments are fetched concurrently via asyncio.gather().
+
     :param segments_data: List of segment definitions from validation.
     :param colormap: Name of the colormap to use.
     :param dev: Flag to use development data.
@@ -564,47 +573,51 @@ async def _process_segments(
     :return: Tuple of (segment data lists, per-segment data_status strings).
     :raises Exception: Propagates exceptions from underlying calls like _get_segment_data.
     """
-    output_segments_data = []
-    segment_statuses = []
+    # Pre-allocate result lists
+    output_segments_data: list[list[dict[str, Any]] | None] = [None] * len(segments_data)
+    segment_statuses: list[str] = ["fresh"] * len(segments_data)
 
-    for segment in segments_data:
+    # Collect async tasks and their indices
+    async_tasks = []
+    async_indices = []
+
+    for i, segment in enumerate(segments_data):
         logging.debug(f"Processing segment: {segment}")
-        try:
-            # Handle colormap preview mode
-            if cm_preview:
-                segment_times = _create_colormap_preview(colormap, segment["led_count"])
-                if segment["reversed"]:
-                    segment_times = segment_times[::-1]
-                output_segments_data.append(segment_times)
-                segment_statuses.append("fresh")
-                logging.debug(f"Generated colormap preview for segment index {segment['index']}")
-                continue
 
-            # Handle "dark" segments directly
-            if segment["program"] == "dark":
-                dark_segment_times = []
-                for _ in range(segment["led_count"]):
-                    dark_segment_times.append(
-                        {
-                            "time": None,
-                            "yr_symbol": None,
-                            "wl_symbol": "dark",
-                            "prec_nowcast": None,
-                            "prec_forecast": None,
-                            "precipitation": None,
-                            "prob_of_prec": None,
-                            "wind_gust": None,
-                            "rgb": [0, 0, 0],
-                            "hex": "000000",
-                        }
-                    )
-                output_segments_data.append(dark_segment_times)
-                segment_statuses.append("fresh")
-                logging.debug(f"Generated dark segment data for segment index {segment['index']}")
-                continue
+        # Handle colormap preview mode (synchronous)
+        if cm_preview:
+            segment_times = _create_colormap_preview(colormap, segment["led_count"])
+            if segment["reversed"]:
+                segment_times = segment_times[::-1]
+            output_segments_data[i] = segment_times
+            logging.debug(f"Generated colormap preview for segment index {segment['index']}")
+            continue
 
-            # Process normal segments by fetching weather data
-            segment_times, data_status = await _get_segment_data(
+        # Handle "dark" segments directly (synchronous)
+        if segment["program"] == "dark":
+            dark_segment_times = []
+            for _ in range(segment["led_count"]):
+                dark_segment_times.append(
+                    {
+                        "time": None,
+                        "yr_symbol": None,
+                        "wl_symbol": "dark",
+                        "prec_nowcast": None,
+                        "prec_forecast": None,
+                        "precipitation": None,
+                        "prob_of_prec": None,
+                        "wind_gust": None,
+                        "rgb": [0, 0, 0],
+                        "hex": "000000",
+                    }
+                )
+            output_segments_data[i] = dark_segment_times
+            logging.debug(f"Generated dark segment data for segment index {segment['index']}")
+            continue
+
+        # Queue weather segments for concurrent processing
+        async_tasks.append(
+            _get_segment_data(
                 lat=segment["lat"],
                 lon=segment["lon"],
                 slot_minutes=segment["slot_minutes"],
@@ -612,14 +625,22 @@ async def _process_segments(
                 colormap_name=colormap,
                 dev=dev,
             )
-            # Reverse the segment if requested (after stale indicator was applied to last LED)
-            if segment["reversed"]:
-                segment_times = segment_times[::-1]
-            output_segments_data.append(segment_times)
-            segment_statuses.append(data_status)
+        )
+        async_indices.append(i)
+
+    # Fetch all weather segments concurrently
+    if async_tasks:
+        try:
+            results = await asyncio.gather(*async_tasks)
         except Exception as e:
-            logging.exception(f"Error processing segment {segment}: {e}")
-            raise Exception(f"Failed to process segment data for {segment['lat']},{segment['lon']}") from e
+            logging.exception(f"Error processing weather segments: {e}")
+            raise
+
+        for idx, (segment_times, data_status) in zip(async_indices, results, strict=True):
+            if segments_data[idx]["reversed"]:
+                segment_times = list(reversed(segment_times))
+            output_segments_data[idx] = segment_times
+            segment_statuses[idx] = data_status
 
     return output_segments_data, segment_statuses
 
@@ -798,9 +819,8 @@ async def v2(request: Request) -> Response:
 
 path = os.getenv("ENDPOINT_PATH", "/v2")
 
-# Define the path to the HTML file relative to this script's location
-# Assumes web/ is one level up from server/endpoint/
-HTML_FILE_PATH = os.path.join(os.path.dirname(__file__), "web", "index.html")
+# Path to the UI HTML file, relative to this module's location
+HTML_FILE_PATH = Path(__file__).parent / "web" / "index.html"
 
 
 async def serve_ui(request: Request) -> Response:
@@ -821,59 +841,101 @@ routes = [
 
 debug = True if os.getenv("DEBUG") else False
 
-app = Starlette(debug=debug, routes=routes)
+
+@asynccontextmanager
+async def lifespan(app: Starlette):
+    """Manage shared resources across the application lifecycle.
+
+    Creates data directories, then creates and closes a shared httpx.AsyncClient.
+    Creating directories here (rather than on each request) keeps the request path
+    free of blocking filesystem calls.
+
+    Args:
+        app: The Starlette application instance.
+    """
+    error_dump_dir = Path(os.getenv("ERROR_DUMP_DIR", str(yrapiclient.DATA_DIR / "error_dumps")))
+    for data_dir in (
+        yrapiclient.DATA_DIR / "cache",
+        yrapiclient.DATA_DIR / "history",
+        error_dump_dir,
+    ):
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+    yrapiclient.http_client = httpx.AsyncClient(
+        headers={"User-Agent": yrapiclient.USER_AGENT},
+        timeout=httpx.Timeout(10.0),
+    )
+    yield
+    await yrapiclient.http_client.aclose()
+    yrapiclient.http_client = None
+
+
+app = Starlette(debug=debug, routes=routes, lifespan=lifespan)
 
 
 # --- Error Dumping Function ---
+def _write_error_dump(filepath: Path, timestamp: str, exc: Exception, request_info: dict) -> None:
+    """Write error details to a file synchronously.
+
+    Args:
+        filepath: Path to the error dump file.
+        timestamp: Formatted timestamp string.
+        exc: The exception that occurred.
+        request_info: Dictionary with request details (url, method, client_host, body).
+    """
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(f"Timestamp: {timestamp}\n")
+        f.write(f"Exception Type: {type(exc).__name__}\n")
+        f.write(f"Exception Message: {exc}\n\n")
+
+        f.write("--- Request Details ---\n")
+        if request_info:
+            f.write(f"URL: {request_info.get('url', 'N/A')}\n")
+            f.write(f"Method: {request_info.get('method', 'N/A')}\n")
+            f.write(f"Client Host: {request_info.get('client_host', 'N/A')}\n")
+            body = request_info.get("body")
+            if body is not None:
+                max_body_log_size = 1024 * 10
+                f.write("Body:\n")
+                if len(body) > max_body_log_size:
+                    f.write(f"(Truncated, size={len(body)} > {max_body_log_size})\n")
+                    f.write(body[:max_body_log_size].decode(errors="replace"))
+                    f.write("...\n")
+                else:
+                    f.write(body.decode(errors="replace"))
+                    f.write("\n")
+        else:
+            f.write("Request object not available.\n")
+
+        f.write("\n--- Traceback ---\n")
+        traceback.print_exc(file=f)
+
+
 async def dump_error_to_file(request: Request | None, exc: Exception):
     """Dumps detailed error information to a timestamped file."""
     logging.info("Entered dump_error_to_file")
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    # Use environment variable for dump directory or default
-    dump_dir = os.getenv("ERROR_DUMP_DIR", "error_dumps")
+    dump_dir = Path(os.getenv("ERROR_DUMP_DIR", str(yrapiclient.DATA_DIR / "error_dumps")))
     filename = f"error_dump_{timestamp}.log"
     try:
-        os.makedirs(dump_dir, exist_ok=True)
-        filepath = os.path.join(dump_dir, filename)
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(f"Timestamp: {timestamp}\n")
-            f.write(f"Exception Type: {type(exc).__name__}\n")
-            f.write(f"Exception Message: {exc}\n\n")
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        filepath = dump_dir / filename
 
-            f.write("--- Request Details ---\n")
-            if request:
-                f.write(f"URL: {request.url}\n")
-                f.write(f"Method: {request.method}\n")
-                # Avoid logging potentially sensitive headers unless explicitly needed/allowed
-                # f.write(f"Headers: {dict(request.headers)}\n")
-                client_host = request.client.host if request.client else "N/A"
-                f.write(f"Client Host: {client_host}\n")
-                # Safely attempt to read body - might fail or be large
-                try:
-                    # Limit body size to prevent huge logs
-                    max_body_log_size = 1024 * 10  # 10 KB limit
-                    body_bytes = await request.body()
-                    f.write("Body:\n")  # Add newline after "Body:" label
-                    if len(body_bytes) > max_body_log_size:
-                        f.write(f"(Truncated, size={len(body_bytes)} > {max_body_log_size})\n")
-                        f.write(body_bytes[:max_body_log_size].decode(errors="replace"))
-                        f.write("...\n")  # Add newline after truncated body
-                    else:
-                        f.write(body_bytes.decode(errors="replace"))
-                        f.write("\n")  # Add newline after full body
-                except Exception as body_exc:
-                    f.write(f"(Error reading body: {body_exc})\n")
-            else:
-                f.write("Request object not available.\n")
+        # Gather request info before offloading to thread
+        request_info = {}
+        if request:
+            request_info["url"] = str(request.url)
+            request_info["method"] = request.method
+            request_info["client_host"] = request.client.host if request.client else "N/A"
+            try:
+                request_info["body"] = await request.body()
+            except Exception as body_exc:
+                request_info["body_error"] = str(body_exc)
 
-            f.write("\n--- Traceback ---\n")
-            traceback.print_exc(file=f)
-
+        await asyncio.to_thread(_write_error_dump, filepath, timestamp, exc, request_info)
         logging.info(f"Error details dumped to {filepath}")
     except Exception as dump_exc:
-        # Log error during dumping process itself
         logging.error(f"CRITICAL: Failed to dump error details to {filename}. Dump Error: {dump_exc}", exc_info=True)
-        # Optionally log the original exception here as well if dumping failed
         logging.error(f"Original Exception ({type(exc).__name__}): {exc}", exc_info=False)
     logging.info("Exiting dump_error_to_file")
 
@@ -928,7 +990,7 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
         logging.info("Attempting to capture exception to Sentry and flush...")
         try:
             sentry_sdk.capture_exception(exc)
-            sentry_sdk.flush(timeout=5.0)  # Give 5 seconds for flush
+            await asyncio.to_thread(sentry_sdk.flush, 5.0)  # Give 5 seconds for flush
             logging.info("Sentry capture_exception and flush called.")
         except Exception as sentry_exc:
             logging.error(f"Exception occurred during Sentry capture/flush: {sentry_exc}", exc_info=True)

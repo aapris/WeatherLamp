@@ -7,6 +7,9 @@ services:
     restart: unless-stopped
     volumes:
       - ./endpoint:/home/app
+      # Single named volume for all app-written data (cache, history, error_dumps).
+      # Mounted on top of the source bind-mount so Docker manages ownership correctly.
+      - weatherlamp_data:/home/app/data
     logging:
       driver: "json-file"
       options:

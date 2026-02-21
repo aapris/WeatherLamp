@@ -17,6 +17,11 @@ RUN mkdir -p $HOME && \
     adduser --system --group app && \
     chown -R app:app $HOME
 
+# Create persistent data directories before switching to the app user so that
+# Docker named volumes mounted here are initialised with correct ownership.
+RUN mkdir -p $HOME/data/cache $HOME/data/history $HOME/data/error_dumps && \
+    chown -R app:app $HOME/data
+
 WORKDIR $HOME
 
 # Install Python dependencies
