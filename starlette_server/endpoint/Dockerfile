@@ -10,17 +10,10 @@ RUN apt-get update && \
     apt-get install -y libgeos-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Create and set up the app user
+# Working directory; the process user is set at runtime via docker-compose
+# user: "${UID}:${GID}" so that bind-mounted files are owned by the host user.
 ENV HOME=/home/app
-RUN mkdir -p $HOME && \
-    addgroup --system app && \
-    adduser --system --group app && \
-    chown -R app:app $HOME
-
-# Create persistent data directories before switching to the app user so that
-# Docker named volumes mounted here are initialised with correct ownership.
-RUN mkdir -p $HOME/data/cache $HOME/data/history $HOME/data/error_dumps && \
-    chown -R app:app $HOME/data
+RUN mkdir -p $HOME
 
 WORKDIR $HOME
 
@@ -30,8 +23,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY --chown=app:app . .
-
-USER app
+COPY . .
 
 EXPOSE 8000/tcp

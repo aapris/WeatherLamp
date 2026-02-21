@@ -1,19 +1,30 @@
-volumes:
-  weatherlamp_data:
+# Copy this file to docker-compose.yml and adjust as needed.
+# The ./data directory is bind-mounted for persistent data (cache, history, error_dumps).
+# Create it on the host before first run: mkdir -p data
+
+x-endpoint: &endpoint-defaults
+  build:
+    context: ./endpoint
+  restart: unless-stopped
+  # Run as the host user so bind-mounted files have correct ownership.
+  user: "${UID:-1000}:${GID:-1000}"
+  volumes:
+    - ./endpoint:/home/app
+    - ./data:/home/app/data
+  logging:
+    driver: "json-file"
+    options:
+      max-file: "10"
+      max-size: "20m"
 
 services:
 
   v2:
+    <<: *endpoint-defaults
     env_file:
-      - .env.dev
-    extends:
-      file: common.yml
-      service: endpoint
+      - .env
     environment:
-      #      SENTRY_DSN: https://pubjet@sentry.example.com/11
       ENDPOINT_PATH: /v2
-      MAX_CONTENT_LENGTH: 1024
-      DEV_SERVER: 1
     command: uvicorn --reload --host 0.0.0.0 app_v2:app
     expose:
       - 8000

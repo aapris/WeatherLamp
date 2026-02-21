@@ -157,3 +157,8 @@ dmypy.json
 
 .DS_Store
 docker-compose.yml
+starlette_server/data/
+starlette_server/endpoint/data/
+starlette_server/endpoint/cache/
+starlette_server/endpoint/history/
+starlette_server/endpoint/error_dumps/
